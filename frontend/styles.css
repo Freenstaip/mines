@@ -1,48 +1,23 @@
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800;900&display=swap');
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
-html{
-  width:100%;
-  max-width:100%;
-  height:100%;
-  margin:0;
-  overflow:hidden;
-  overscroll-behavior:none;
-  -webkit-text-size-adjust:100%;
-}
+html,body{min-height:100%;margin:0;touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%}
 body{
-  width:100%;
-  max-width:100%;
-  height:100%;
-  margin:0;
   background:#070d1c;
   color:#fff;
   font-family:'Manrope',Inter,Arial,sans-serif;
-  overflow:hidden;
-  overscroll-behavior:none;
-  touch-action:pan-y;
+  overflow-x:hidden;
 }
 .app{
-  width:100%;
+  min-height:100vh;
   max-width:520px;
-  height:100dvh;
-  min-height:100dvh;
   margin:0 auto;
   padding:18px 12px 28px;
-  overflow-y:auto;
-  overflow-x:hidden;
-  -webkit-overflow-scrolling:touch;
   background:
     radial-gradient(circle at 8% 42%,rgba(0,207,255,.24) 0,rgba(0,207,255,.05) 28%,transparent 52%),
     radial-gradient(circle at 100% 16%,rgba(77,91,255,.18) 0,transparent 38%),
     linear-gradient(180deg,#0a1022 0%,#070d1c 100%);
 }
-
-.header,.board-wrap,.board,.info-card,.bet-card,.bet-row,.multiplier-strip{
-  max-width:100%;
-  min-width:0;
-}
-
 .header{height:76px;display:flex;align-items:center;justify-content:space-between;padding:4px 8px 18px}
 .title{
   font-size:36px;
@@ -61,7 +36,6 @@ body{
 .balance-box span{display:block;color:#8e9bb8;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.7px}
 .balance-box strong{display:block;margin-top:3px;font-size:22px;font-weight:900}
 .board-wrap{
-  width:calc(100% - 8px);
   margin:0 4px 16px;
   padding:16px;
   border-radius:34px;
@@ -211,4 +185,60 @@ body{
   .info-left strong{font-size:18px}
   .multiplier-strip{gap:5px;padding-left:8px}
   .multiplier{max-width:50px;padding:10px 4px;font-size:15px;border-radius:12px}
+}
+
+/* Center layout + no horizontal page movement */
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.app {
+  width: 100%;
+  max-width: 520px;
+  min-width: 0;
+  margin-left: auto;
+  margin-right: auto;
+  overflow: hidden;
+}
+
+.board-wrap,
+.info-card,
+.bet-card {
+  width: 100%;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.board,
+.multiplier-strip {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.traps {
+  flex-shrink: 0;
+}
+
+@supports (width: 100dvw) {
+  html,
+  body {
+    width: 100dvw;
+    max-width: 100dvw;
+  }
+
+  .app {
+    max-width: min(520px, 100dvw);
+  }
 }
