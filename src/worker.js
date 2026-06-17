@@ -402,8 +402,8 @@ async function saveTelegramProfile(env, from) {
 }
 
 async function sendWelcomeMessage(env, chatId) {
-  await sendMessage(env, chatId, 'Добро пожаловать в Mines Demo! Для начала игры нажмите кнопку «Старт».', {
-    inline_keyboard: [[{ text: '🎮 Старт', web_app: { url: gameUrl(env) } }]]
+  await sendMessage(env, chatId, 'Welcome to Mines! You have been credited with $10.', {
+    inline_keyboard: [[{ text: '🎮 START', web_app: { url: gameUrl(env) } }]]
   });
 }
 
@@ -495,8 +495,8 @@ async function sendPushToNotClicked(env) {
 
   let sent = 0;
   for (const player of results || []) {
-    const ok = await sendMessage(env, player.user_id, 'Вы можете продолжить игру на сайте. Нажмите кнопку ниже.', {
-      inline_keyboard: [[{ text: 'Продолжить игру', url: partnerUrl(env) }]]
+    const ok = await sendMessage(env, player.user_id, 'To continue the game, you need to go to the website.', {
+      inline_keyboard: [[{ text: 'Continue game', url: partnerUrl(env) }]]
     });
     if (ok) sent += 1;
   }
