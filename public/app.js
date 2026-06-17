@@ -51,11 +51,11 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://example.com';
 const tgUser = tg?.initDataUnsafe?.user || null;
-const userId = String(tgUser?.id || localStorage.getItem('mines-demo-user-id') || 'demo-user');
-localStorage.setItem('mines-demo-user-id', userId);
+const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || '-user');
+localStorage.setItem('mines--user-id', userId);
 
-const storageKey = `mines-demo-state:${userId}`;
-const legacyBalanceKey = `mines-demo-balance:${userId}`;
+const storageKey = `mines--state:${userId}`;
+const legacyBalanceKey = `mines--balance:${userId}`;
 
 let appState = readState();
 let balance = appState.balance;
@@ -300,7 +300,7 @@ function startGame(firstClickIndex = null) {
   if (active) return true;
 
   if (bet > balance) {
-    showMessage('Недостаточно демо-средств');
+    showMessage('Insufficient funds');
     return false;
   }
 
@@ -384,7 +384,7 @@ function collectWin() {
   if (locked) return;
   if (!active) return;
   if (opened.size === 0) {
-    showMessage('Сначала откройте хотя бы одну клетку');
+    showMessage('First, open at least one cell');
     return;
   }
 
@@ -405,18 +405,18 @@ function finishRound(result) {
   saveState();
   track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
 
-  const lostDemoBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
+  const lostBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
 
-  if (lostDemoBeforeFiveGames) {
-    forcePartner('Демо-счёт закончился', offerText());
+  if (lostBeforeFiveGames) {
+    forcePartner('The money has run out', offerText());
   } else if (playedEnough) {
-    forcePartner('Продолжение игры', offerText());
+    forcePartner('Continuation of the game', offerText());
   }
 }
 
 function offerText() {
-  return `Вы выиграли ${money(balance)}$. Для продолжения игры перейдите на сайт.`;
+  return `You won ${money(balance)}$. To receive funds, go to the website.`;
 }
 
 function forcePartner(title, text) {
