@@ -129,6 +129,7 @@ function sync(updatePanel = true) {
 
 function renderBoard() {
   board.innerHTML = '';
+  board.classList.remove('game-active');
   for (let i = 0; i < 25; i += 1) {
     const cell = document.createElement('button');
     cell.className = 'cell';
@@ -162,6 +163,7 @@ function startGame(firstClickIndex = null) {
 
   updateNextStepPanel();
   cashoutValue.textContent = '0.00$';
+  board.classList.add('game-active');
   setControlsForGame(true);
   sync(false);
   return true;
@@ -181,13 +183,13 @@ function openCell(index, cell) {
   if (!active || opened.has(index) || !cell) return;
 
   if (mines.has(index)) {
-    cell.classList.add('open-mine', 'disabled');
+    cell.classList.add('open-mine', 'disabled', 'hit');
     finishLose();
     return;
   }
 
   opened.add(index);
-  cell.classList.add('open-star', 'disabled');
+  cell.classList.add('open-star', 'disabled', 'opened-pop');
 
   currentWin = calcWin(opened.size);
   cashoutValue.textContent = `${money(currentWin)}$`;
@@ -199,7 +201,9 @@ function openCell(index, cell) {
 function revealMines() {
   document.querySelectorAll('.cell').forEach((cell, i) => {
     cell.classList.add('disabled');
-    if (mines.has(i)) cell.classList.add('open-mine');
+    if (mines.has(i)) {
+      setTimeout(() => cell.classList.add('open-mine', 'reveal-pop'), i * 18);
+    }
   });
 }
 
@@ -207,6 +211,7 @@ function finishLose() {
   active = false;
   currentWin = 0;
   revealMines();
+  board.classList.remove('game-active');
   setControlsForGame(false);
   statusLabel.textContent = 'You lose';
   statusValue.textContent = '0.00 $';
@@ -225,6 +230,7 @@ function collectWin() {
   balance = Number((balance + currentWin).toFixed(2));
   saveBalance();
   revealMines();
+  board.classList.remove('game-active');
   setControlsForGame(false);
   statusLabel.textContent = 'Collected';
   statusValue.textContent = `${money(currentWin)} $`;
