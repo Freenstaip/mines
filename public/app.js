@@ -223,9 +223,7 @@ function renderMultipliers() {
   multiplierStrip.classList.remove('hidden');
 
   const safeCells = 25 - traps;
-  const isCompact = window.matchMedia && window.matchMedia('(max-width: 430px)').matches;
-  const visibleMultipliers = isCompact ? 2 : 3;
-  for (let offset = 1; offset <= visibleMultipliers; offset += 1) {
+  for (let offset = 1; offset <= 3; offset += 1) {
     const step = opened.size + offset;
     const item = document.createElement('div');
     item.className = `multiplier ${offset === 1 ? 'active' : 'muted'}`;
