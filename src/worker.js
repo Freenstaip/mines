@@ -62,6 +62,18 @@ async function ensureSchema(env) {
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_players_last_seen ON players(last_seen)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_players_clicked_partner ON players(clicked_partner)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_players_locked ON players(locked)").run();
+
+  // Безопасные миграции для уже созданной базы: добавляем данные Telegram-профиля.
+  await addColumnIfMissing(db, 'players', 'username', 'TEXT');
+  await addColumnIfMissing(db, 'players', 'first_name', 'TEXT');
+  await addColumnIfMissing(db, 'players', 'last_name', 'TEXT');
+  await addColumnIfMissing(db, 'players', 'language_code', 'TEXT');
+}
+
+async function addColumnIfMissing(db, table, column, type) {
+  const { results } = await db.prepare(`PRAGMA table_info(${table})`).all();
+  const exists = (results || []).some((row) => row.name === column);
+  if (!exists) await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run();
 }
 
 function partnerUrl(env) {
@@ -90,7 +102,11 @@ function rowToPlayer(row) {
     clickedAt: row.clicked_at ? new Date(Number(row.clicked_at)).toISOString() : null,
     resetNonce: row.reset_nonce || '',
     triggerAfter: Number(row.trigger_after || 3),
-    lastResult: row.last_result || ''
+    lastResult: row.last_result || '',
+    username: row.username || '',
+    firstName: row.first_name || '',
+    lastName: row.last_name || '',
+    languageCode: row.language_code || ''
   };
 }
 
@@ -102,8 +118,8 @@ async function readPlayer(env, userId) {
   const now = Date.now();
   const triggerAfter = randomTriggerAfter();
   await db.prepare(`
-    INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, reset_nonce, trigger_after)
-    VALUES (?, ?, ?, 0, 0, 10, 0, 0, '', ?)
+    INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, reset_nonce, trigger_after, username, first_name, last_name, language_code)
+    VALUES (?, ?, ?, 0, 0, 10, 0, 0, '', ?, '', '', '', '')
   `).bind(String(userId), now, now, triggerAfter).run();
 
   return {
@@ -117,7 +133,11 @@ async function readPlayer(env, userId) {
     clickedPartner: false,
     resetNonce: '',
     triggerAfter,
-    lastResult: ''
+    lastResult: '',
+    username: '',
+    firstName: '',
+    lastName: '',
+    languageCode: ''
   };
 }
 
@@ -138,7 +158,11 @@ async function updatePlayer(env, userId, patch) {
         clicked_at = COALESCE(?, clicked_at),
         reset_nonce = ?,
         trigger_after = ?,
-        last_result = ?
+        last_result = ?,
+        username = COALESCE(NULLIF(?, ''), username),
+        first_name = COALESCE(NULLIF(?, ''), first_name),
+        last_name = COALESCE(NULLIF(?, ''), last_name),
+        language_code = COALESCE(NULLIF(?, ''), language_code)
     WHERE user_id = ?
   `).bind(
     lastSeen,
@@ -151,6 +175,10 @@ async function updatePlayer(env, userId, patch) {
     next.resetNonce || '',
     Number(next.triggerAfter || randomTriggerAfter()),
     next.lastResult || '',
+    next.username || '',
+    next.firstName || '',
+    next.lastName || '',
+    next.languageCode || '',
     String(userId)
   ).run();
 
@@ -161,7 +189,13 @@ async function getPlayer(request, env) {
   const url = new URL(request.url);
   const userId = String(url.searchParams.get('userId') || request.headers.get('x-user-id') || 'demo-user');
   const player = await readPlayer(env, userId);
-  const updated = await updatePlayer(env, userId, { visits: Number(player.visits || 0) + 1 });
+  const updated = await updatePlayer(env, userId, {
+    visits: Number(player.visits || 0) + 1,
+    username: url.searchParams.get('username') || request.headers.get('x-tg-username') || player.username || '',
+    firstName: url.searchParams.get('firstName') || request.headers.get('x-tg-first-name') || player.firstName || '',
+    lastName: url.searchParams.get('lastName') || request.headers.get('x-tg-last-name') || player.lastName || '',
+    languageCode: url.searchParams.get('languageCode') || request.headers.get('x-tg-language-code') || player.languageCode || ''
+  });
 
   const shouldLock = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3) || Number(updated.balance || 0) <= 0;
   const finalPlayer = shouldLock && !updated.locked
@@ -185,6 +219,12 @@ async function trackEvent(request, env) {
   const userId = String(body.userId || request.headers.get('x-user-id') || 'demo-user');
   const player = await readPlayer(env, userId);
   const patch = { lastSeenMs: Date.now() };
+  if (body.user) {
+    patch.username = body.user.username || player.username || '';
+    patch.firstName = body.user.first_name || body.user.firstName || player.firstName || '';
+    patch.lastName = body.user.last_name || body.user.lastName || player.lastName || '';
+    patch.languageCode = body.user.language_code || body.user.languageCode || player.languageCode || '';
+  }
 
   if (body.event === 'visit') {
     patch.visits = Number(player.visits || 0) + 1;
@@ -249,6 +289,11 @@ async function telegramWebhook(request, env) {
     return json({ ok: true });
   }
 
+  if (text.startsWith('/players') || data === 'admin_players') {
+    await sendPlayersList(env, chatId);
+    return json({ ok: true });
+  }
+
   if (data === 'admin_push') {
     const sent = await sendPushToNotClicked(env);
     await sendMessage(env, chatId, `Дожим отправлен: ${sent} игрокам.`);
@@ -310,10 +355,49 @@ async function sendAdminPanel(env, chatId) {
   await sendMessage(env, chatId, text, {
     inline_keyboard: [
       [{ text: '🔄 Обновить', callback_data: 'admin_refresh' }],
+      [{ text: '👥 Игроки / ID', callback_data: 'admin_players' }],
       [{ text: '📩 Дожим', callback_data: 'admin_push' }],
       [{ text: '♻️ Сброс игрока', callback_data: 'admin_reset_help' }]
     ]
   });
+}
+
+async function sendPlayersList(env, chatId) {
+  const { results } = await getDb(env).prepare(`
+    SELECT user_id, username, first_name, last_name, games_played, balance, locked, clicked_partner, last_seen
+    FROM players
+    ORDER BY last_seen DESC
+    LIMIT 20
+  `).all();
+
+  if (!results || results.length === 0) {
+    await sendMessage(env, chatId, 'Игроков пока нет.');
+    return;
+  }
+
+  const lines = ['👥 Последние 20 игроков', ''];
+  for (const p of results) {
+    const name = formatPlayerName(p);
+    const status = Number(p.clicked_partner) ? 'перешёл' : (Number(p.locked) ? 'окно показано' : 'играет');
+    lines.push(`${name}`);
+    lines.push(`ID: ${p.user_id}`);
+    lines.push(`Игр: ${Number(p.games_played || 0)} | Баланс: $${Number(p.balance ?? 10).toFixed(2)} | ${status}`);
+    lines.push(`Сброс: /reset ${p.user_id}`);
+    lines.push('');
+  }
+
+  await sendMessage(env, chatId, lines.join('\n'), {
+    inline_keyboard: [
+      [{ text: '🔄 Обновить список', callback_data: 'admin_players' }],
+      [{ text: '⬅️ Назад в админку', callback_data: 'admin_refresh' }]
+    ]
+  });
+}
+
+function formatPlayerName(p) {
+  const username = p.username ? `@${p.username}` : '';
+  const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ');
+  return username || fullName || `Игрок ${p.user_id}`;
 }
 
 async function sendPushToNotClicked(env) {
