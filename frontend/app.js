@@ -201,9 +201,14 @@ function openCell(index, cell) {
 function revealMines() {
   document.querySelectorAll('.cell').forEach((cell, i) => {
     cell.classList.add('disabled');
-    if (mines.has(i)) {
-      setTimeout(() => cell.classList.add('open-mine', 'reveal-pop'), i * 18);
-    }
+
+    const isMine = mines.has(i);
+    const delay = i * 18;
+
+    setTimeout(() => {
+      cell.classList.remove('open-star', 'open-mine');
+      cell.classList.add(isMine ? 'open-mine' : 'open-star', 'reveal-pop');
+    }, delay);
   });
 }
 
