@@ -1,18 +1,17 @@
 name = "mines-api"
-compatibility_date = "2025-01-01"
 main = "src/worker.js"
+compatibility_date = "2025-01-01"
 
 [assets]
 directory = "./public"
 binding = "ASSETS"
 
-# Эти переменные будут храниться в GitHub и автоматически применяться при deploy.
-# После загрузки в GitHub замени значения ниже на свои реальные.
 [vars]
 PARTNER_URL = "https://vk.com"
 ADMIN_IDS = "5947697192"
 SETUP_SECRET = "kardan1488"
 
-# TELEGRAM_BOT_TOKEN НЕ храните в GitHub/wrangler.toml.
-# Его нужно один раз добавить в Cloudflare как Secret:
-# Settings -> Variables and Secrets -> Add secret -> TELEGRAM_BOT_TOKEN
+[[d1_databases]]
+binding = "DB"
+database_name = "mines-db"
+database_id = "46382ec4-23b8-4da2-a902-faff6897d2ad"
