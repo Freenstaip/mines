@@ -1,29 +1,41 @@
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800;900&display=swap');
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
-html{width:100%;max-width:100%;overflow-x:hidden;overscroll-behavior-x:none}
-html,body{min-height:100%;margin:0;touch-action:pan-y manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+html,body{
+  min-height:100%;
+  width:100%;
+  max-width:100%;
+  margin:0;
+  touch-action:pan-y manipulation;
+  overscroll-behavior:none;
+  overscroll-behavior-x:none;
+  -webkit-text-size-adjust:100%;
+  overflow-x:hidden;
+}
 body{
+  position:fixed;
+  inset:0;
+  width:100%;
+  max-width:100vw;
   background:#070d1c;
   color:#fff;
   font-family:'Manrope',Inter,Arial,sans-serif;
-  width:100%;
-  max-width:100%;
   overflow-x:hidden;
+  overflow-y:auto;
 }
 .app{
   min-height:100vh;
   width:100%;
-  max-width:520px;
+  max-width:min(520px,100vw);
   margin:0 auto;
-  padding:18px 12px 28px;
   overflow-x:hidden;
+  padding:18px 12px 28px;
   background:
     radial-gradient(circle at 8% 42%,rgba(0,207,255,.24) 0,rgba(0,207,255,.05) 28%,transparent 52%),
     radial-gradient(circle at 100% 16%,rgba(77,91,255,.18) 0,transparent 38%),
     linear-gradient(180deg,#0a1022 0%,#070d1c 100%);
 }
-.header{height:76px;display:flex;align-items:center;justify-content:space-between;padding:4px 8px 18px}
+.header{height:76px;display:flex;align-items:center;justify-content:space-between;padding:4px 8px 18px;max-width:100%;min-width:0}
 .title{
   font-size:36px;
   font-weight:900;
@@ -41,9 +53,10 @@ body{
 .balance-box span{display:block;color:#8e9bb8;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.7px}
 .balance-box strong{display:block;margin-top:3px;font-size:22px;font-weight:900}
 .board-wrap{
-  width:100%;
+  width:calc(100% - 8px);
   max-width:100%;
-  margin:0 0 16px;
+  min-width:0;
+  margin:0 4px 16px;
   padding:16px;
   border-radius:34px;
   background:linear-gradient(180deg,#10192e,#091024);
@@ -51,7 +64,7 @@ body{
   box-shadow:0 0 28px rgba(68,217,255,.32),inset 0 0 30px rgba(0,0,0,.32);
   animation:boardGlow 3.2s ease-in-out infinite;
 }
-.board{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;perspective:700px}
+.board{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;perspective:700px;max-width:100%;min-width:0}
 .cell{
   position:relative;
   overflow:hidden;
@@ -90,20 +103,18 @@ body{
 .cell.reveal-pop{animation:mineReveal .42s cubic-bezier(.16,1,.3,1) both}
 .cell.disabled{pointer-events:none}
 .info-card,.bet-card{
-  width:100%;
-  max-width:100%;
   margin-top:12px;
   padding:18px 18px;
   border-radius:26px;
   background:linear-gradient(180deg,#181e34,#12182c);
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 14px 34px rgba(0,0,0,.26);
 }
-.info-card{display:flex;align-items:center;justify-content:flex-start;gap:12px;overflow:hidden;max-width:100%}
-.info-left{display:flex;align-items:center;gap:12px;min-width:150px;flex:0 0 auto}
+.info-card{display:flex;align-items:center;justify-content:flex-start;gap:12px;overflow:hidden;max-width:100%;min-width:0}
+.info-left{display:flex;align-items:center;gap:12px;min-width:0;flex:0 1 auto}
 .info-left img{width:54px;height:54px;object-fit:cover;border-radius:16px;flex:0 0 auto;filter:drop-shadow(0 8px 16px rgba(255,173,36,.34))}
 .info-left span{display:block;color:#43f28f;font-weight:900;font-size:14px;letter-spacing:.2px}
 .info-left strong{display:block;font-size:24px;white-space:nowrap;font-weight:900;text-shadow:0 7px 18px rgba(255,255,255,.12)}
-.traps{min-width:160px;margin-left:auto;background:#0b1020;border-radius:20px;display:flex;align-items:center;justify-content:space-around;padding:9px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
+.traps{min-width:132px;max-width:160px;flex:0 0 auto;margin-left:auto;background:#0b1020;border-radius:20px;display:flex;align-items:center;justify-content:space-around;padding:9px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
 .traps button,.bet-row button{
   border:0;
   background:linear-gradient(180deg,#172039,#10172b);
@@ -121,7 +132,7 @@ body{
 .traps button:hover,.bet-row button:hover{filter:brightness(1.16);box-shadow:0 0 18px rgba(68,217,255,.16)}
 .traps strong{display:block;text-align:center;font-size:25px;font-weight:900}
 .traps span{display:block;color:#a7aec8;font-size:13px;font-weight:800}
-.bet-row{display:flex;align-items:center;justify-content:space-between;background:#0b1020;border-radius:18px;padding:9px 10px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
+.bet-row{display:flex;align-items:center;justify-content:space-between;max-width:100%;min-width:0;background:#0b1020;border-radius:18px;padding:9px 10px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
 .bet-row strong{font-size:32px;font-weight:900}
 .play,.cashout{
   margin-top:16px;
@@ -142,7 +153,7 @@ body{
 .play:active,.cashout:active{transform:scale(.97)}
 .cashout strong{display:block;font-size:28px;font-weight:900}
 .hidden{display:none!important}
-.multiplier-strip{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;max-width:100%;padding-left:16px;margin-left:6px;border-left:4px solid rgba(118,133,170,.28);overflow:hidden;contain:layout paint}
+.multiplier-strip{display:flex;align-items:center;gap:8px;flex:1 1 0;min-width:0;max-width:100%;padding-left:10px;margin-left:0;border-left:3px solid rgba(118,133,170,.28);overflow:hidden}
 .multiplier{
   flex:1 1 0;
   min-width:0;
@@ -171,7 +182,7 @@ body{
 @keyframes buttonShine{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
 
 @media(max-width:390px){
-  .app{padding-left:10px;padding-right:10px;max-width:100vw}
+  .app{padding-left:10px;padding-right:10px}
   .board{gap:10px}
   .board-wrap{padding:12px}
   .info-card{padding:14px}
@@ -194,4 +205,17 @@ body{
   .info-left strong{font-size:18px}
   .multiplier-strip{gap:5px;padding-left:8px}
   .multiplier{max-width:50px;padding:10px 4px;font-size:15px;border-radius:12px}
+}
+
+
+/* Hard mobile overflow guard */
+img,button{max-width:100%}
+.app,.header,.board-wrap,.board,.info-card,.bet-card,.bet-row,.multiplier-strip{overflow-x:hidden}
+@media(max-width:430px){
+  .app{padding-left:10px;padding-right:10px}
+  .title{font-size:32px}
+  .balance-box{min-width:128px;padding:9px 12px}
+  .balance-box strong{font-size:20px}
+  .info-card{padding-left:12px;padding-right:12px}
+  .traps{min-width:126px}
 }
