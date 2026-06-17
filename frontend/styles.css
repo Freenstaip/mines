@@ -231,86 +231,63 @@ body {
   }
 }
 
+/* FINAL mobile centering fix: no side drift, equal left/right margins */
+html {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden !important;
+}
 
-/* FINAL MOBILE CENTERING FIX
-   Держим страницу по центру, запрещаем горизонтальный сдвиг,
-   но НЕ блокируем вертикальную прокрутку. */
-html,
 body {
   width: 100%;
   max-width: 100%;
   margin: 0;
-  overflow-x: hidden;
+  overflow-x: hidden !important;
   overscroll-behavior-x: none;
-}
-
-body {
-  display: block;
-  position: relative;
-  background: #070d1c;
+  display: block !important;
 }
 
 .app {
-  width: 100%;
-  max-width: 520px;
-  min-width: 0;
-  margin-left: auto;
-  margin-right: auto;
-  padding-left: 14px;
-  padding-right: 14px;
-  overflow-x: hidden;
-  touch-action: pan-y manipulation;
+  width: min(100% - 24px, 520px) !important;
+  max-width: 520px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  overflow-x: hidden !important;
 }
 
 .header,
 .board-wrap,
 .info-card,
 .bet-card {
-  width: 100%;
-  max-width: 100%;
-  margin-left: auto;
-  margin-right: auto;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+
+.header {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
 }
 
 .board-wrap,
 .info-card,
 .bet-card {
-  max-width: calc(100vw - 28px);
+  box-sizing: border-box !important;
 }
 
 .board,
-.info-card,
 .bet-row,
 .multiplier-strip,
-.traps {
-  min-width: 0;
-}
-
-.cell,
-.traps button,
-.bet-row button,
-.play,
-.cashout {
-  touch-action: manipulation;
+.traps,
+.info-left {
+  max-width: 100%;
 }
 
 @media (max-width: 390px) {
   .app {
-    padding-left: 12px;
-    padding-right: 12px;
-  }
-
-  .board-wrap,
-  .info-card,
-  .bet-card {
-    max-width: calc(100vw - 24px);
-  }
-}
-
-@supports (overflow: clip) {
-  html,
-  body,
-  .app {
-    overflow-x: clip;
+    width: min(100% - 18px, 520px) !important;
   }
 }
