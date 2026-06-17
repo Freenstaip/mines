@@ -16,6 +16,9 @@ const multiplierStrip = document.querySelector('#multiplierStrip');
 const START_BALANCE = 10;
 const userId = tg?.initDataUnsafe?.user?.id || 'demo-user';
 const storageKey = `mines-demo-balance:${userId}`;
+const stateKey = `mines-demo-state:${userId}`;
+const PARTNER_URL = window.MINES_PARTNER_URL || 'https://partner-site.example';
+
 
 let balance = readBalance();
 let bet = 0.20;
@@ -26,6 +29,141 @@ let active = false;
 let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
+let playerState = readPlayerState();
+
+function readPlayerState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(stateKey) || '{}');
+    return {
+      gamesPlayed: Number(saved.gamesPlayed || 0),
+      limitAfterGames: Number(saved.limitAfterGames || randomLimit()),
+      locked: Boolean(saved.locked),
+      linkClicked: Boolean(saved.linkClicked),
+      lockReason: saved.lockReason || '',
+      remoteResetAt: Number(saved.remoteResetAt || 0)
+    };
+  } catch {
+    return { gamesPlayed: 0, limitAfterGames: randomLimit(), locked: false, linkClicked: false, lockReason: '', remoteResetAt: 0 };
+  }
+}
+
+function randomLimit() {
+  return Math.floor(Math.random() * 3) + 3; // 3, 4 или 5 игр
+}
+
+function savePlayerState() {
+  localStorage.setItem(stateKey, JSON.stringify(playerState));
+}
+
+
+async function syncRemoteState() {
+  try {
+    const response = await fetch(`/api/state?userId=${encodeURIComponent(userId)}`);
+    if (!response.ok) return;
+    const remote = await response.json();
+    const remoteResetAt = Number(remote.resetAt || 0);
+
+    if (remoteResetAt > Number(playerState.remoteResetAt || 0)) {
+      playerState = {
+        gamesPlayed: 0,
+        limitAfterGames: randomLimit(),
+        locked: false,
+        linkClicked: false,
+        lockReason: '',
+        remoteResetAt
+      };
+      balance = START_BALANCE;
+      saveBalance();
+      savePlayerState();
+      hidePartnerOverlay();
+      renderBoard();
+      sync();
+    }
+  } catch {}
+}
+
+function track(event, extra = {}) {
+  fetch('/api/event', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, event, ...extra })
+  }).catch(() => {});
+}
+
+
+
+function ensurePartnerOverlay() {
+  let overlay = document.querySelector('#partnerOverlay');
+  if (overlay) return overlay;
+
+  overlay = document.createElement('div');
+  overlay.id = 'partnerOverlay';
+  overlay.className = 'partner-overlay hidden';
+  overlay.innerHTML = `
+    <div class="partner-modal">
+      <div class="partner-title">Продолжение игры</div>
+      <div id="partnerText" class="partner-text">Чтобы продолжить игру, перейдите на сайт партнёра.</div>
+      <button id="partnerGoBtn" class="partner-button" type="button">Перейти и продолжить</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#partnerGoBtn').addEventListener('click', () => {
+    playerState.linkClicked = true;
+    playerState.locked = true;
+    savePlayerState();
+    track('partner_click');
+
+    if (tg?.openLink) tg.openLink(PARTNER_URL);
+    else window.location.href = PARTNER_URL;
+  });
+
+  return overlay;
+}
+
+function showPartnerOverlay(reason = 'games_limit') {
+  playerState.locked = true;
+  playerState.lockReason = reason;
+  savePlayerState();
+  track('locked', { reason, gamesPlayed: playerState.gamesPlayed });
+
+  active = false;
+  board?.classList.remove('game-active');
+  setControlsForGame(false);
+
+  const overlay = ensurePartnerOverlay();
+  const text = overlay.querySelector('#partnerText');
+  text.textContent = playerState.linkClicked
+    ? 'Игру можно продолжить на сайте партнёра. Нажмите кнопку ниже.'
+    : 'Демо-режим завершён. Чтобы продолжить игру, перейдите на сайт партнёра.';
+  overlay.classList.remove('hidden');
+}
+
+function hidePartnerOverlay() {
+  ensurePartnerOverlay().classList.add('hidden');
+}
+
+function checkLockOnReturn() {
+  if (playerState.locked) showPartnerOverlay(playerState.lockReason || 'return_after_lock');
+}
+
+function finishCountedGame(reason) {
+  playerState.gamesPlayed += 1;
+  savePlayerState();
+  track('game_finished', { reason, gamesPlayed: playerState.gamesPlayed, balance });
+
+  if (balance < 0.10 && playerState.gamesPlayed < 5) {
+    showPartnerOverlay('demo_balance_lost_before_5_games');
+    return true;
+  }
+
+  if (playerState.gamesPlayed >= playerState.limitAfterGames) {
+    showPartnerOverlay('games_limit');
+    return true;
+  }
+
+  return false;
+}
 
 function readBalance() {
   const saved = Number(localStorage.getItem(storageKey));
@@ -146,6 +284,11 @@ function setControlsForGame(isActive) {
 }
 
 function startGame(firstClickIndex = null) {
+  if (playerState.locked) {
+    showPartnerOverlay(playerState.lockReason || 'locked');
+    return false;
+  }
+
   if (active) return true;
 
   if (bet > balance) {
@@ -222,6 +365,7 @@ function finishLose() {
   statusValue.textContent = '0.00 $';
   renderMultipliers();
   sync(false);
+  finishCountedGame('lose');
 }
 
 function collectWin() {
@@ -241,6 +385,7 @@ function collectWin() {
   statusValue.textContent = `${money(currentWin)} $`;
   renderMultipliers();
   sync(false);
+  finishCountedGame('cashout');
 }
 
 function changeBet(delta) {
@@ -269,6 +414,9 @@ cashoutBtn.addEventListener('click', collectWin);
 
 renderBoard();
 sync();
+track('open');
+checkLockOnReturn();
+syncRemoteState();
 updateMaxWinPanel();
 
 // Отключение случайного zoom на телефонах: double tap и pinch zoom
