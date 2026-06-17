@@ -51,46 +51,6 @@ function showMessage(text) {
   else alert(text);
 }
 
-function haptic(type = 'light') {
-  try {
-    if (!tg?.HapticFeedback) return;
-    if (type === 'success' || type === 'warning' || type === 'error') {
-      tg.HapticFeedback.notificationOccurred(type);
-    } else if (type === 'selection') {
-      tg.HapticFeedback.selectionChanged();
-    } else {
-      tg.HapticFeedback.impactOccurred(type);
-    }
-  } catch (_) {}
-}
-
-function pulse(el, className = 'value-bump') {
-  if (!el) return;
-  el.classList.remove(className);
-  void el.offsetWidth;
-  el.classList.add(className);
-}
-
-function animateMoney(el, target, suffix = ' $', duration = 360) {
-  if (!el) return;
-  const previous = Number(el.dataset.value ?? String(el.textContent).replace(/[^0-9.-]/g, ''));
-  const from = Number.isFinite(previous) ? previous : target;
-  const to = Number(target || 0);
-  const startedAt = performance.now();
-  el.dataset.value = String(to);
-
-  function tick(now) {
-    const t = Math.min(1, (now - startedAt) / duration);
-    const eased = 1 - Math.pow(1 - t, 3);
-    const value = from + (to - from) * eased;
-    el.textContent = `${money(value)}${suffix}`;
-    if (t < 1) requestAnimationFrame(tick);
-  }
-
-  requestAnimationFrame(tick);
-  pulse(el);
-}
-
 function coefficient(safeOpened, minesCount) {
   const base = 1 + minesCount * 0.08;
   return Number(Math.pow(base, safeOpened).toFixed(2));
@@ -133,7 +93,6 @@ function renderMultipliers() {
     const step = opened.size + offset;
     const item = document.createElement('div');
     item.className = `multiplier ${offset === 1 ? 'active' : 'muted'}`;
-    item.style.animationDelay = `${offset * 45}ms`;
     item.textContent = step <= safeCells ? `X${multiplierForStep(step).toFixed(2)}` : '—';
     multiplierStrip.appendChild(item);
   }
@@ -141,13 +100,13 @@ function renderMultipliers() {
 
 function updateMaxWinPanel() {
   statusLabel.textContent = 'Max. win';
-  animateMoney(statusValue, calcMaxWin(), ' $', 320);
+  statusValue.textContent = `${money(calcMaxWin())} $`;
   renderMultipliers();
 }
 
 function updateNextStepPanel() {
   statusLabel.textContent = 'Next step';
-  animateMoney(statusValue, calcNextWin(), ' $', 320);
+  statusValue.textContent = `${money(calcNextWin())} $`;
   renderMultipliers();
 }
 
@@ -161,7 +120,7 @@ function randomMines(count, safeIndex = null) {
 }
 
 function sync(updatePanel = true) {
-  animateMoney(balanceEl, balance, ' $', 300);
+  balanceEl.textContent = `${money(balance)} $`;
   betEl.textContent = money(bet);
   trapCountEl.textContent = traps;
 
@@ -199,12 +158,11 @@ function startGame(firstClickIndex = null) {
   mines = randomMines(traps, firstClickIndex);
   currentWin = 0;
   active = true;
-  haptic('medium');
   balance = Number((balance - bet).toFixed(2));
   saveBalance();
 
   updateNextStepPanel();
-  animateMoney(cashoutValue, 0, '$', 1);
+  cashoutValue.textContent = '0.00$';
   board.classList.add('game-active');
   setControlsForGame(true);
   sync(false);
@@ -225,18 +183,16 @@ function openCell(index, cell) {
   if (!active || opened.has(index) || !cell) return;
 
   if (mines.has(index)) {
-    haptic('error');
     cell.classList.add('open-mine', 'disabled', 'hit');
     finishLose();
     return;
   }
 
   opened.add(index);
-  haptic('light');
   cell.classList.add('open-star', 'disabled', 'opened-pop');
 
   currentWin = calcWin(opened.size);
-  animateMoney(cashoutValue, currentWin, '$', 320);
+  cashoutValue.textContent = `${money(currentWin)}$`;
   updateNextStepPanel();
 
   if (opened.size >= 25 - traps) collectWin();
@@ -263,7 +219,7 @@ function finishLose() {
   board.classList.remove('game-active');
   setControlsForGame(false);
   statusLabel.textContent = 'You lose';
-  animateMoney(statusValue, 0, ' $', 260);
+  statusValue.textContent = '0.00 $';
   renderMultipliers();
   sync(false);
 }
@@ -276,28 +232,25 @@ function collectWin() {
   }
 
   active = false;
-  haptic('success');
   balance = Number((balance + currentWin).toFixed(2));
   saveBalance();
   revealMines();
   board.classList.remove('game-active');
   setControlsForGame(false);
   statusLabel.textContent = 'Collected';
-  animateMoney(statusValue, currentWin, ' $', 320);
+  statusValue.textContent = `${money(currentWin)} $`;
   renderMultipliers();
   sync(false);
 }
 
 function changeBet(delta) {
   if (active) return;
-  haptic('selection');
   bet = Math.max(0.10, Number((bet + delta).toFixed(2)));
   sync();
 }
 
 function changeTraps(delta) {
   if (active) return;
-  haptic('selection');
 
   trapOptionIndex += delta;
   if (trapOptionIndex < 0) trapOptionIndex = TRAP_OPTIONS.length - 1;
