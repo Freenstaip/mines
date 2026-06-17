@@ -572,35 +572,27 @@ body.android-webview .partner-modal {
   }
 }
 
-/* Android scroll fix: allow vertical scrolling when browser/TG bars cover the bottom button */
-html,
-body {
-  height: auto !important;
-  min-height: 100% !important;
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-  overscroll-behavior-y: auto !important;
-  touch-action: auto !important;
-}
+/* Android scroll bottom fix: allow scrolling to the Start button without leaving a large empty tail */
+@media (max-width: 520px) {
+  html,
+  body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overscroll-behavior-y: contain;
+  }
 
-body {
-  -webkit-overflow-scrolling: touch;
-}
+  .app {
+    min-height: auto !important;
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px)) !important;
+  }
 
-.app {
-  height: auto !important;
-  min-height: var(--app-height, 100dvh) !important;
-  overflow-y: visible !important;
-  touch-action: auto !important;
-  padding-bottom: calc(112px + env(safe-area-inset-bottom, 0px)) !important;
-}
+  .bet-card {
+    margin-bottom: 0 !important;
+  }
 
-/* Extra room for Android Chrome / Telegram WebView bottom controls */
-body.android-webview .app {
-  padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px)) !important;
-}
-
-.play,
-.cashout {
-  scroll-margin-bottom: 132px;
+  .play,
+  .cashout {
+    margin-bottom: 0 !important;
+  }
 }
