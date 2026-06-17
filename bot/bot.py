@@ -1,5 +1,8 @@
 import os
 import asyncio
+import logging
+from pathlib import Path
+
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command, CommandStart
@@ -7,27 +10,41 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 from storage import init_db, upsert_user, mark_clicked, stats, not_clicked_users, reset_players, reset_player
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BASE_DIR.parent
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.pages.dev")
-PARTNER_URL = os.getenv("PARTNER_URL", "https://partner-site.com")
+# Загружаем .env из нескольких мест, чтобы бот работал и при запуске из корня,
+# и при запуске из папки bot/.
+load_dotenv(PROJECT_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
+load_dotenv(override=False)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.pages.dev").strip()
+PARTNER_URL = os.getenv("PARTNER_URL", "https://partner-site.com").strip()
+
+ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "").strip()
 ADMIN_IDS = {
     int(admin_id.strip())
-    for admin_id in os.getenv("ADMIN_IDS", "").split(",")
+    for admin_id in ADMIN_IDS_RAW.split(",")
     if admin_id.strip().isdigit()
 }
 
 if not BOT_TOKEN:
-    raise RuntimeError("Укажите BOT_TOKEN в .env")
+    raise RuntimeError(
+        "Укажите BOT_TOKEN в .env. Файл можно положить в корень проекта или в папку bot/."
+    )
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
 
 def is_admin(user_id: int) -> bool:
-    # Если ADMIN_IDS не задан, /admin временно доступен всем.
-    # Для продакшена обязательно укажите ADMIN_IDS в .env.
+    # Если ADMIN_IDS пустой, админка доступна всем. Это удобно для теста.
+    # Для продакшена обязательно укажите ADMIN_IDS.
     return not ADMIN_IDS or user_id in ADMIN_IDS
 
 
@@ -37,15 +54,15 @@ def game_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def partner_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Продолжить игру", callback_data="partner:go")]
-    ])
-
-
 def partner_url_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Перейти на сайт", url=PARTNER_URL)]
+    ])
+
+
+def partner_callback_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Продолжить игру", callback_data="partner:go")]
     ])
 
 
@@ -59,12 +76,14 @@ def admin_keyboard() -> InlineKeyboardMarkup:
 
 def admin_text() -> str:
     data = stats()
+    admin_mode = "ограничен" if ADMIN_IDS else "тестовый, доступен всем"
     return (
         "📊 Статистика Mines\n\n"
         f"Всего игроков: {data['total']}\n"
         f"Игроков за 24ч: {data['users_24h']}\n"
         f"Перешли по ссылке: {data['clicked']}\n"
-        f"Не перешли по ссылке: {data['not_clicked']}"
+        f"Не перешли по ссылке: {data['not_clicked']}\n\n"
+        f"Режим админки: {admin_mode}"
     )
 
 
@@ -82,14 +101,13 @@ async def start(message: types.Message):
     )
 
 
-@dp.callback_query(F.data == "partner:go")
-async def partner_go(callback: types.CallbackQuery):
-    mark_clicked(callback.from_user.id)
-    await callback.message.answer(
-        "Игру можно продолжить на сайте партнёра.",
-        reply_markup=partner_url_keyboard(),
+@dp.message(Command("ping"))
+async def ping(message: types.Message):
+    await message.answer(
+        "✅ Бот работает.\n"
+        f"Ваш Telegram ID: {message.from_user.id}\n"
+        f"ADMIN_IDS загружен: {'да' if ADMIN_IDS else 'нет, тестовый режим'}"
     )
-    await callback.answer("Ссылка отправлена")
 
 
 @dp.message(Command("admin"))
@@ -98,7 +116,8 @@ async def admin_panel(message: types.Message):
         await message.answer(
             "⛔️ У вас нет доступа к админке.\n\n"
             f"Ваш Telegram ID: {message.from_user.id}\n"
-            "Добавьте его в ADMIN_IDS в .env и перезапустите бота."
+            "Добавьте его в ADMIN_IDS в .env и перезапустите бота.\n\n"
+            f"Сейчас ADMIN_IDS={ADMIN_IDS_RAW or '(пусто)'}"
         )
         return
 
@@ -108,6 +127,16 @@ async def admin_panel(message: types.Message):
         first_name=message.from_user.first_name,
     )
     await message.answer(admin_text(), reply_markup=admin_keyboard())
+
+
+@dp.callback_query(F.data == "partner:go")
+async def partner_go(callback: types.CallbackQuery):
+    mark_clicked(callback.from_user.id)
+    await callback.message.answer(
+        "Игру можно продолжить на сайте партнёра.",
+        reply_markup=partner_url_keyboard(),
+    )
+    await callback.answer("Ссылка отправлена")
 
 
 @dp.callback_query(F.data == "admin:refresh")
@@ -137,11 +166,12 @@ async def push_not_clicked(callback: types.CallbackQuery):
             await bot.send_message(
                 user_id,
                 "🎮 Игру можно продолжить на сайте. Нажмите кнопку ниже.",
-                reply_markup=partner_keyboard(),
+                reply_markup=partner_callback_keyboard(),
             )
             sent += 1
             await asyncio.sleep(0.05)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Не удалось отправить сообщение user_id=%s: %s", user_id, exc)
             failed += 1
 
     await callback.message.edit_text(
@@ -182,6 +212,11 @@ async def reset_one_player(message: types.Message):
 
 async def main():
     init_db()
+    logger.info("Бот запускается")
+    logger.info("WEBAPP_URL=%s", WEBAPP_URL)
+    logger.info("PARTNER_URL=%s", PARTNER_URL)
+    logger.info("ADMIN_IDS=%s", sorted(ADMIN_IDS) if ADMIN_IDS else "пусто, тестовый режим")
+
     await bot.set_chat_menu_button(
         menu_button=MenuButtonWebApp(text="Mini App", web_app=WebAppInfo(url=WEBAPP_URL))
     )
