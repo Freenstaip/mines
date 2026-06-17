@@ -69,6 +69,8 @@ async function ensureSchema(env) {
   await addColumnIfMissing(db, 'players', 'first_name', 'TEXT');
   await addColumnIfMissing(db, 'players', 'last_name', 'TEXT');
   await addColumnIfMissing(db, 'players', 'language_code', 'TEXT');
+  await addColumnIfMissing(db, 'players', 'direct_partner_click', 'INTEGER NOT NULL DEFAULT 0');
+  await addColumnIfMissing(db, 'players', 'direct_partner_clicked_at', 'INTEGER');
 }
 
 async function addColumnIfMissing(db, table, column, type) {
@@ -79,6 +81,10 @@ async function addColumnIfMissing(db, table, column, type) {
 
 function partnerUrl(env) {
   return env.PARTNER_URL || 'https://example.com';
+}
+
+function gameUrl(env) {
+  return env.GAME_URL || env.WEBAPP_URL || env.PUBLIC_GAME_URL || env.PUBLIC_URL || 'https://minesdemo.site';
 }
 
 function adminIds(env) {
@@ -117,7 +123,9 @@ function rowToPlayer(row) {
     username: row.username || '',
     firstName: row.first_name || '',
     lastName: row.last_name || '',
-    languageCode: row.language_code || ''
+    languageCode: row.language_code || '',
+    directPartnerClick: Boolean(row.direct_partner_click),
+    directPartnerClickedAt: row.direct_partner_clicked_at ? new Date(Number(row.direct_partner_clicked_at)).toISOString() : null
   };
 }
 
@@ -130,8 +138,8 @@ async function readPlayer(env, userId) {
   const triggerAfter = randomTriggerAfter();
   const resetNonce = await getGlobalResetNonce(env);
   await db.prepare(`
-    INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, reset_nonce, trigger_after, username, first_name, last_name, language_code)
-    VALUES (?, ?, ?, 0, 0, 10, 0, 0, ?, ?, '', '', '', '')
+    INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, reset_nonce, trigger_after, username, first_name, last_name, language_code, direct_partner_click)
+    VALUES (?, ?, ?, 0, 0, 10, 0, 0, ?, ?, '', '', '', '', 0)
   `).bind(String(userId), now, now, resetNonce, triggerAfter).run();
 
   return {
@@ -149,7 +157,9 @@ async function readPlayer(env, userId) {
     username: '',
     firstName: '',
     lastName: '',
-    languageCode: ''
+    languageCode: '',
+    directPartnerClick: false,
+    directPartnerClickedAt: null
   };
 }
 
@@ -158,6 +168,7 @@ async function updatePlayer(env, userId, patch) {
   const next = { ...current, ...patch, userId: String(userId) };
   const lastSeen = patch.lastSeenMs || Date.now();
   const clickedAt = next.clickedAtMs || (next.clickedPartner && !current.clickedPartner ? lastSeen : null);
+  const directClickedAt = next.directPartnerClickedAtMs || (next.directPartnerClick && !current.directPartnerClick ? lastSeen : null);
 
   await getDb(env).prepare(`
     UPDATE players
@@ -174,7 +185,9 @@ async function updatePlayer(env, userId, patch) {
         username = COALESCE(NULLIF(?, ''), username),
         first_name = COALESCE(NULLIF(?, ''), first_name),
         last_name = COALESCE(NULLIF(?, ''), last_name),
-        language_code = COALESCE(NULLIF(?, ''), language_code)
+        language_code = COALESCE(NULLIF(?, ''), language_code),
+        direct_partner_click = ?,
+        direct_partner_clicked_at = COALESCE(?, direct_partner_clicked_at)
     WHERE user_id = ?
   `).bind(
     lastSeen,
@@ -191,6 +204,8 @@ async function updatePlayer(env, userId, patch) {
     next.firstName || '',
     next.lastName || '',
     next.languageCode || '',
+    next.directPartnerClick ? 1 : 0,
+    directClickedAt,
     String(userId)
   ).run();
 
@@ -223,7 +238,8 @@ async function getPlayer(request, env) {
     triggerAfter: Number(finalPlayer.triggerAfter || 3),
     gamesPlayed: Number(finalPlayer.gamesPlayed || 0),
     balance: Number(finalPlayer.balance ?? 10),
-    partnerUrl: partnerUrl(env)
+    partnerUrl: partnerUrl(env),
+    gameUrl: gameUrl(env)
   });
 }
 async function trackEvent(request, env) {
@@ -250,12 +266,16 @@ async function trackEvent(request, env) {
 
   if (body.event === 'locked') patch.locked = true;
 
-  if (body.event === 'partner_click') {
+  if (body.event === 'partner_click' || body.event === 'direct_partner_click') {
     patch.locked = true;
     patch.clickedPartner = true;
     patch.clickedAtMs = Date.now();
     patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
     patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
+    if (body.event === 'direct_partner_click') {
+      patch.directPartnerClick = true;
+      patch.directPartnerClickedAtMs = Date.now();
+    }
   }
 
   if (body.state) {
@@ -289,12 +309,20 @@ async function telegramWebhook(request, env) {
   const data = update.callback_query?.data || '';
 
   if (!from || !chatId) return json({ ok: true });
+
+  if (update.callback_query?.id) await answerCallback(env, update.callback_query.id);
+
+  if (text.startsWith('/start')) {
+    await saveTelegramProfile(env, from);
+    await sendWelcomeMessage(env, chatId);
+    return json({ ok: true });
+  }
+
   if (!isAdmin(env, from.id)) {
     if (text.startsWith('/admin')) await sendMessage(env, chatId, 'У вас нет доступа к админке.');
     return json({ ok: true });
   }
 
-  if (update.callback_query?.id) await answerCallback(env, update.callback_query.id);
 
   if (text.startsWith('/admin') || data === 'admin_refresh') {
     await sendAdminPanel(env, chatId);
@@ -346,6 +374,7 @@ async function telegramWebhook(request, env) {
     await updatePlayer(env, userId, {
       locked: false,
       clickedPartner: false,
+      directPartnerClick: false,
       gamesPlayed: 0,
       balance: 10,
       resetNonce: crypto.randomUUID(),
@@ -361,6 +390,23 @@ async function telegramWebhook(request, env) {
   return json({ ok: true });
 }
 
+async function saveTelegramProfile(env, from) {
+  if (!from?.id) return;
+  const player = await readPlayer(env, from.id);
+  await updatePlayer(env, from.id, {
+    username: from.username || player.username || '',
+    firstName: from.first_name || player.firstName || '',
+    lastName: from.last_name || player.lastName || '',
+    languageCode: from.language_code || player.languageCode || ''
+  });
+}
+
+async function sendWelcomeMessage(env, chatId) {
+  await sendMessage(env, chatId, 'Добро пожаловать в Mines Demo! Для начала игры нажмите кнопку «Старт».', {
+    inline_keyboard: [[{ text: '🎮 Старт', web_app: { url: gameUrl(env) } }]]
+  });
+}
+
 async function sendAdminPanel(env, chatId) {
   const db = getDb(env);
   const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
@@ -368,6 +414,7 @@ async function sendAdminPanel(env, chatId) {
   const total = await db.prepare('SELECT COUNT(*) AS count FROM players').first('count');
   const last24 = await db.prepare('SELECT COUNT(*) AS count FROM players WHERE first_seen >= ? OR last_seen >= ?').bind(dayAgo, dayAgo).first('count');
   const clicked = await db.prepare('SELECT COUNT(*) AS count FROM players WHERE clicked_partner = 1').first('count');
+  const directClicked = await db.prepare('SELECT COUNT(*) AS count FROM players WHERE direct_partner_click = 1').first('count');
   const locked = await db.prepare('SELECT COUNT(*) AS count FROM players WHERE locked = 1 AND clicked_partner = 0').first('count');
 
   const text = [
@@ -376,6 +423,7 @@ async function sendAdminPanel(env, chatId) {
     `Всего игроков: ${Number(total || 0)}`,
     `Игроков за 24ч: ${Number(last24 || 0)}`,
     `Перешли по ссылке: ${Number(clicked || 0)}`,
+    `Сразу перешли из игры: ${Number(directClicked || 0)}`,
     `Окно показано, но не перешли: ${Number(locked || 0)}`,
     '',
     `Партнёрская ссылка: ${partnerUrl(env)}`
@@ -394,7 +442,7 @@ async function sendAdminPanel(env, chatId) {
 
 async function sendPlayersList(env, chatId) {
   const { results } = await getDb(env).prepare(`
-    SELECT user_id, username, first_name, last_name, games_played, balance, locked, clicked_partner, last_seen
+    SELECT user_id, username, first_name, last_name, games_played, balance, locked, clicked_partner, direct_partner_click, last_seen
     FROM players
     ORDER BY last_seen DESC
     LIMIT 20
@@ -408,7 +456,7 @@ async function sendPlayersList(env, chatId) {
   const lines = ['👥 Последние 20 игроков', ''];
   for (const p of results) {
     const name = formatPlayerName(p);
-    const status = Number(p.clicked_partner) ? 'перешёл' : (Number(p.locked) ? 'окно показано' : 'играет');
+    const status = Number(p.direct_partner_click) ? 'сразу перешёл' : (Number(p.clicked_partner) ? 'перешёл' : (Number(p.locked) ? 'окно показано' : 'играет'));
     lines.push(`${name}`);
     lines.push(`ID: ${p.user_id}`);
     lines.push(`Игр: ${Number(p.games_played || 0)} | Баланс: $${Number(p.balance ?? 10).toFixed(2)} | ${status}`);
