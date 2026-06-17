@@ -19,7 +19,8 @@ const partnerButton = document.querySelector('#partnerButton');
 
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://example.com';
-const userId = String(tg?.initDataUnsafe?.user?.id || localStorage.getItem('mines-demo-user-id') || 'demo-user');
+const tgUser = tg?.initDataUnsafe?.user || null;
+const userId = String(tgUser?.id || localStorage.getItem('mines-demo-user-id') || 'demo-user');
 localStorage.setItem('mines-demo-user-id', userId);
 
 const storageKey = `mines-demo-state:${userId}`;
@@ -89,6 +90,10 @@ async function api(path, options = {}) {
       headers: {
         'content-type': 'application/json',
         'x-user-id': userId,
+        'x-tg-username': tgUser?.username || '',
+        'x-tg-first-name': tgUser?.first_name || '',
+        'x-tg-last-name': tgUser?.last_name || '',
+        'x-tg-language-code': tgUser?.language_code || '',
         ...(options.headers || {})
       }
     });
@@ -100,7 +105,14 @@ async function api(path, options = {}) {
 }
 
 async function loadRemoteState() {
-  const remote = await api(`/api/player?userId=${encodeURIComponent(userId)}`);
+  const params = new URLSearchParams({
+    userId,
+    username: tgUser?.username || '',
+    firstName: tgUser?.first_name || '',
+    lastName: tgUser?.last_name || '',
+    languageCode: tgUser?.language_code || ''
+  });
+  const remote = await api(`/api/player?${params.toString()}`);
   if (!remote) {
     applyLockIfNeeded();
     return;
@@ -132,7 +144,7 @@ async function loadRemoteState() {
 }
 
 async function track(event, extra = {}) {
-  const payload = { userId, event, state: appState, ...extra };
+  const payload = { userId, user: tgUser, event, state: appState, ...extra };
   api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
