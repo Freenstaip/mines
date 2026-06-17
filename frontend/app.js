@@ -295,3 +295,25 @@ document.addEventListener('gesturechange', function (event) {
 document.addEventListener('gestureend', function (event) {
   event.preventDefault();
 }, { passive: false });
+
+
+// Блокируем горизонтальные свайпы, чтобы страница не ездила вправо-влево на телефоне
+let touchStartX = 0;
+let touchStartY = 0;
+
+document.addEventListener('touchstart', function (event) {
+  if (!event.touches || event.touches.length !== 1) return;
+  touchStartX = event.touches[0].clientX;
+  touchStartY = event.touches[0].clientY;
+}, { passive: true });
+
+document.addEventListener('touchmove', function (event) {
+  if (!event.touches || event.touches.length !== 1) return;
+
+  const dx = event.touches[0].clientX - touchStartX;
+  const dy = event.touches[0].clientY - touchStartY;
+
+  if (Math.abs(dx) > Math.abs(dy)) {
+    event.preventDefault();
+  }
+}, { passive: false });
