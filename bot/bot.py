@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.com")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.pages.dev")
 
 if not BOT_TOKEN:
     raise RuntimeError("Укажите BOT_TOKEN в .env")
@@ -22,9 +22,8 @@ async def start(message: types.Message):
         [InlineKeyboardButton(text="🎮 Start", web_app=WebAppInfo(url=WEBAPP_URL))]
     ])
     await message.answer(
-        "👋 Добро пожаловать в Mines!\n\n"
-        "Чтобы начать игру, нажмите кнопку Start или откройте Mini App в меню бота.",
-        reply_markup=keyboard
+        "👋 Добро пожаловать в Mines!\n\nНажмите Start, чтобы начать демо-игру.",
+        reply_markup=keyboard,
     )
 
 async def main():
