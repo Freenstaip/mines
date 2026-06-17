@@ -14,8 +14,14 @@ const cashoutValue = document.querySelector('#cashoutValue');
 const multiplierStrip = document.querySelector('#multiplierStrip');
 
 const START_BALANCE = 10;
+const PARTNER_URL = window.PARTNER_URL || 'https://partner-site.com';
 const userId = tg?.initDataUnsafe?.user?.id || 'demo-user';
-const storageKey = `mines-demo-balance:${userId}`;
+const storagePrefix = `mines-demo:${userId}`;
+const storageKey = `${storagePrefix}:balance`;
+const gamesCountKey = `${storagePrefix}:games-count`;
+const lossBalanceCountKey = `${storagePrefix}:loss-balance-count`;
+const blockedKey = `${storagePrefix}:blocked`;
+const thresholdKey = `${storagePrefix}:partner-threshold`;
 
 let balance = readBalance();
 let bet = 0.20;
@@ -26,16 +32,33 @@ let active = false;
 let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
+let lockRendered = false;
+
+function sendBotEvent(action, extra = {}) {
+  if (!tg?.sendData) return;
+
+  try {
+    tg.sendData(JSON.stringify({
+      action,
+      user_id: userId,
+      games_count: Number(localStorage.getItem(gamesCountKey) || 0),
+      balance: Number(balance || 0),
+      ...extra,
+    }));
+  } catch (error) {
+    console.warn('Telegram sendData error:', error);
+  }
+}
 
 function readBalance() {
   const saved = Number(localStorage.getItem(storageKey));
 
-  if (!Number.isFinite(saved) || saved <= 0) {
+  if (!Number.isFinite(saved)) {
     localStorage.setItem(storageKey, money(START_BALANCE));
     return START_BALANCE;
   }
 
-  return saved;
+  return Math.max(0, saved);
 }
 
 function saveBalance() {
@@ -44,6 +67,37 @@ function saveBalance() {
 
 function money(value) {
   return Number(value || 0).toFixed(2);
+}
+
+function getGamesCount() {
+  return Number(localStorage.getItem(gamesCountKey) || 0);
+}
+
+function setGamesCount(value) {
+  localStorage.setItem(gamesCountKey, String(value));
+}
+
+function getLossBalanceCount() {
+  return Number(localStorage.getItem(lossBalanceCountKey) || 0);
+}
+
+function setLossBalanceCount(value) {
+  localStorage.setItem(lossBalanceCountKey, String(value));
+}
+
+function getPartnerThreshold() {
+  let threshold = Number(localStorage.getItem(thresholdKey));
+
+  if (!Number.isInteger(threshold) || threshold < 3 || threshold > 5) {
+    threshold = Math.floor(Math.random() * 3) + 3;
+    localStorage.setItem(thresholdKey, String(threshold));
+  }
+
+  return threshold;
+}
+
+function isBlocked() {
+  return localStorage.getItem(blockedKey) === '1';
 }
 
 function showMessage(text) {
@@ -145,11 +199,90 @@ function setControlsForGame(isActive) {
   cashoutBtn.classList.toggle('hidden', !isActive);
 }
 
+function partnerScreenText(hasClicked = false) {
+  return hasClicked
+    ? 'Игру можно продолжить на сайте партнёра.'
+    : 'Демо-раунд завершён. Продолжите игру на сайте партнёра.';
+}
+
+function renderPartnerLock(hasClicked = false) {
+  if (lockRendered) return;
+  lockRendered = true;
+  active = false;
+
+  document.body.innerHTML = `
+    <main class="app" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;">
+      <section class="info-card" style="width:100%;max-width:420px;text-align:center;display:block;">
+        <h2 style="margin:0 0 12px;">Продолжить игру</h2>
+        <p style="margin:0 0 20px;color:rgba(255,255,255,.75);line-height:1.45;">${partnerScreenText(hasClicked)}</p>
+        <button id="partnerGoBtn" class="play" type="button" style="width:100%;">Перейти на сайт</button>
+      </section>
+    </main>
+  `;
+
+  document.querySelector('#partnerGoBtn')?.addEventListener('click', () => {
+    localStorage.setItem(`${storagePrefix}:partner-clicked`, '1');
+    sendBotEvent('partner_click');
+    window.location.href = PARTNER_URL;
+  });
+}
+
+function showPartnerModal(reason = 'games_limit') {
+  localStorage.setItem(blockedKey, '1');
+  sendBotEvent('partner_popup', { reason });
+  renderPartnerLock(false);
+}
+
+function checkPartnerTrigger(reason) {
+  if (isBlocked()) {
+    renderPartnerLock(localStorage.getItem(`${storagePrefix}:partner-clicked`) === '1');
+    return true;
+  }
+
+  const gamesCount = getGamesCount();
+  const lossesCount = getLossBalanceCount();
+
+  if (gamesCount >= getPartnerThreshold()) {
+    showPartnerModal('games_limit');
+    return true;
+  }
+
+  if (lossesCount >= 5) {
+    showPartnerModal('demo_balance_lost_5_times');
+    return true;
+  }
+
+  if (balance <= 0 && gamesCount < 5) {
+    showPartnerModal('demo_balance_lost_before_5_games');
+    return true;
+  }
+
+  if (reason) sendBotEvent('game_finished', { reason });
+  return false;
+}
+
+function markGameFinished(reason) {
+  const gamesCount = getGamesCount() + 1;
+  setGamesCount(gamesCount);
+
+  if (balance <= 0) {
+    setLossBalanceCount(getLossBalanceCount() + 1);
+  }
+
+  checkPartnerTrigger(reason);
+}
+
 function startGame(firstClickIndex = null) {
+  if (isBlocked()) {
+    renderPartnerLock(localStorage.getItem(`${storagePrefix}:partner-clicked`) === '1');
+    return false;
+  }
+
   if (active) return true;
 
   if (bet > balance) {
     showMessage('Недостаточно демо-средств');
+    checkPartnerTrigger('not_enough_balance');
     return false;
   }
 
@@ -170,6 +303,11 @@ function startGame(firstClickIndex = null) {
 }
 
 function handleCellClick(index, cell) {
+  if (isBlocked()) {
+    renderPartnerLock(localStorage.getItem(`${storagePrefix}:partner-clicked`) === '1');
+    return;
+  }
+
   if (!active) {
     const started = startGame(index);
     if (!started) return;
@@ -222,6 +360,7 @@ function finishLose() {
   statusValue.textContent = '0.00 $';
   renderMultipliers();
   sync(false);
+  markGameFinished('lose');
 }
 
 function collectWin() {
@@ -241,16 +380,17 @@ function collectWin() {
   statusValue.textContent = `${money(currentWin)} $`;
   renderMultipliers();
   sync(false);
+  markGameFinished('cashout');
 }
 
 function changeBet(delta) {
-  if (active) return;
+  if (active || isBlocked()) return;
   bet = Math.max(0.10, Number((bet + delta).toFixed(2)));
   sync();
 }
 
 function changeTraps(delta) {
-  if (active) return;
+  if (active || isBlocked()) return;
 
   trapOptionIndex += delta;
   if (trapOptionIndex < 0) trapOptionIndex = TRAP_OPTIONS.length - 1;
@@ -267,9 +407,14 @@ document.querySelector('#trapPlus').addEventListener('click', () => changeTraps(
 playBtn.addEventListener('click', () => startGame());
 cashoutBtn.addEventListener('click', collectWin);
 
-renderBoard();
-sync();
-updateMaxWinPanel();
+if (isBlocked()) {
+  renderPartnerLock(localStorage.getItem(`${storagePrefix}:partner-clicked`) === '1');
+} else {
+  sendBotEvent('player_open');
+  renderBoard();
+  sync();
+  updateMaxWinPanel();
+}
 
 // Отключение случайного zoom на телефонах: double tap и pinch zoom
 let lastTouchEnd = 0;
