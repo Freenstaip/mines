@@ -56,6 +56,7 @@ function normalizeState(state) {
     locked: Boolean(state.locked),
     clickedPartner: Boolean(state.clickedPartner),
     popupShown: Boolean(state.popupShown),
+    resetNonce: state.resetNonce || '',
     createdAt: state.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -106,9 +107,12 @@ async function loadRemoteState() {
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
+  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
+  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
   if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
-    appState = normalizeState({ resetNonce: remote.resetNonce, balance: START_BALANCE, triggerAfter: randomInt(3, 5) });
+    appState = normalizeState({ resetNonce: remote.resetNonce, balance: START_BALANCE, triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5) });
     appState.resetNonce = remote.resetNonce;
     balance = START_BALANCE;
     locked = false;
@@ -122,6 +126,7 @@ async function loadRemoteState() {
     saveState();
   }
 
+  saveState();
   applyLockIfNeeded();
   sync();
 }
@@ -346,7 +351,7 @@ function finishRound(result) {
   saveState();
   track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
 
-  const lostDemoBeforeFiveGames = balance <= 0 && appState.gamesPlayed < 5;
+  const lostDemoBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
 
   if (lostDemoBeforeFiveGames) {
