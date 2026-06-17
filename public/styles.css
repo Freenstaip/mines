@@ -51,7 +51,10 @@ body{
   aspect-ratio:1/1;
   border:0;
   border-radius:18px;
-  background:url('./assets/cell.png?v=android-safe-2') center/cover no-repeat;
+  background:
+    radial-gradient(circle at 32% 24%, rgba(255,255,255,.13), transparent 28%),
+    linear-gradient(180deg,#222a4c 0%,#171f39 48%,#11182c 100%);
+  background-color:#151d36;
   box-shadow:0 8px 0 #061126,0 0 0 4px #121a32,0 12px 18px rgba(0,0,0,.25);
   cursor:pointer;
   transform:translateZ(0);
@@ -71,11 +74,17 @@ body{
 .cell:active{transform:scale(.92)}
 .game-active .cell:not(.disabled){animation:idleFloat 2.2s ease-in-out infinite}
 .cell.open-star{
-  background:url('./assets/star.png?v=android-safe-2') center/112% no-repeat;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255,230,118,.28), transparent 46%),
+    linear-gradient(180deg,#ffcf56 0%,#f99716 55%,#b64709 100%);
+  background-color:#f9a51c;
   box-shadow:0 6px 0 #351705,0 0 0 4px rgba(255,191,55,.32),0 0 24px rgba(255,184,45,.45);
 }
 .cell.open-mine{
-  background:url('./assets/mine-x.png?v=android-safe-2') center/112% no-repeat;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255,255,255,.10), transparent 40%),
+    linear-gradient(180deg,#26304f 0%,#151b32 58%,#080e1e 100%);
+  background-color:#12182c;
   box-shadow:0 6px 0 #061126,0 0 0 4px rgba(56,190,255,.28),0 0 24px rgba(0,196,255,.34);
 }
 .cell.opened-pop{animation:flipPop .44s cubic-bezier(.16,1,.3,1) both}
@@ -152,6 +161,57 @@ body{
 .multiplier.muted{opacity:.38}
 .multiplier.active{opacity:1;animation:nextPulse 1.3s ease-in-out infinite}
 .info-card:has(.multiplier-strip:not(.hidden)) .traps{display:none}
+
+/* Android/Telegram WebView safe visuals: no PNG dependency for game cells */
+.cell::before{
+  content:'';
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:1;
+  pointer-events:none;
+  font-family:Arial,sans-serif;
+  font-weight:900;
+  line-height:1;
+}
+.cell.open-star::before{
+  content:'★';
+  color:#fff8a8;
+  font-size:clamp(24px,10vw,52px);
+  text-shadow:0 2px 0 rgba(154,78,0,.55),0 0 18px rgba(255,240,104,.85);
+}
+.cell.open-mine::before{
+  content:'✕';
+  color:#58d5ff;
+  font-size:clamp(26px,11vw,58px);
+  text-shadow:0 2px 0 rgba(0,35,70,.75),0 0 18px rgba(68,217,255,.7);
+}
+.cell.open-mine.hit::before{
+  color:#ff5c5c;
+  text-shadow:0 2px 0 rgba(80,0,0,.7),0 0 20px rgba(255,80,80,.85);
+}
+.info-left img{
+  display:none!important;
+}
+.info-left::before{
+  content:'★';
+  width:54px;
+  height:54px;
+  border-radius:16px;
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#fff8a8;
+  font-size:34px;
+  background:linear-gradient(180deg,#ffce42,#ff7b19);
+  box-shadow:0 8px 16px rgba(255,173,36,.34), inset 0 0 0 1px rgba(255,255,255,.35);
+  text-shadow:0 2px 0 rgba(143,64,0,.55);
+}
+@media(max-width:390px){.info-left::before{width:48px;height:48px;font-size:30px}}
+@media(max-width:340px){.info-left::before{width:42px;height:42px;font-size:26px}}
 
 @keyframes boardGlow{0%,100%{box-shadow:0 0 24px rgba(68,217,255,.28),inset 0 0 30px rgba(0,0,0,.32)}50%{box-shadow:0 0 36px rgba(68,217,255,.42),inset 0 0 30px rgba(0,0,0,.32)}}
 @keyframes idleFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
@@ -353,91 +413,3 @@ body {
   animation:buttonShine 2.8s ease-in-out infinite;
 }
 button:disabled{opacity:.55;cursor:not-allowed}
-
-
-/* Android / Telegram WebView stable rendering patch */
-html, body {
-  min-height: 100%;
-  height: auto;
-  background: #070d1c;
-}
-
-.app {
-  min-height: 100vh;
-  min-height: 100dvh;
-  transform: translateZ(0);
-}
-
-.board-wrap {
-  flex: 0 0 auto;
-  contain: layout paint;
-}
-
-.board {
-  width: 100%;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  align-items: stretch;
-  justify-items: stretch;
-}
-
-.cell {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  min-height: 42px;
-  background-color: #10192e;
-  -webkit-transform: translateZ(0);
-  backface-visibility: hidden;
-}
-
-.cell.open-star,
-.cell.open-mine {
-  background-color: #10192e;
-}
-
-@media (max-width: 430px) {
-  .app {
-    width: 100% !important;
-    max-width: 520px !important;
-    padding-left: max(10px, env(safe-area-inset-left)) !important;
-    padding-right: max(10px, env(safe-area-inset-right)) !important;
-  }
-
-  .header {
-    height: 68px;
-  }
-
-  .title {
-    font-size: clamp(31px, 10vw, 42px);
-  }
-
-  .balance-box {
-    min-width: 122px;
-    padding: 8px 10px;
-  }
-
-  .balance-box strong {
-    font-size: 20px;
-  }
-
-  .board-wrap {
-    padding: 12px;
-    border-width: 6px;
-    border-radius: 28px;
-    margin-bottom: 12px;
-  }
-
-  .board {
-    gap: 9px;
-  }
-
-  .cell {
-    border-radius: 15px;
-    min-height: 44px;
-  }
-}
-
-@media (max-width: 360px) {
-  .board { gap: 7px; }
-  .cell { border-radius: 13px; min-height: 38px; }
-}
