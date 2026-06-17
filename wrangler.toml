@@ -9,9 +9,9 @@ binding = "ASSETS"
 # Эти переменные будут храниться в GitHub и автоматически применяться при deploy.
 # После загрузки в GitHub замени значения ниже на свои реальные.
 [vars]
-PARTNER_URL = "https://YOUR-PARTNER-LINK.example"
-ADMIN_IDS = "123456789"
-SETUP_SECRET = "change-this-secret"
+PARTNER_URL = "https://vk.com"
+ADMIN_IDS = "5947697192"
+SETUP_SECRET = "kardan1488"
 
 # TELEGRAM_BOT_TOKEN НЕ храните в GitHub/wrangler.toml.
 # Его нужно один раз добавить в Cloudflare как Secret:
