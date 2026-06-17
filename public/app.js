@@ -124,10 +124,17 @@ async function loadRemoteState() {
   if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
   if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
+    localStorage.removeItem(storageKey);
+    localStorage.removeItem(legacyBalanceKey);
     appState = normalizeState({ resetNonce: remote.resetNonce, balance: START_BALANCE, triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5) });
     appState.resetNonce = remote.resetNonce;
     balance = START_BALANCE;
     locked = false;
+    active = false;
+    partnerModal.classList.add('hidden');
+    partnerModal.setAttribute('aria-hidden', 'true');
+    renderBoard();
+    setControlsForGame(false);
     saveState();
   }
 
