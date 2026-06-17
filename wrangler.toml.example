@@ -2,11 +2,12 @@ name = "mines-telegram-worker"
 main = "worker.js"
 compatibility_date = "2026-06-17"
 
-# Создайте KV в Cloudflare и подставьте id.
-# В интерфейсе Cloudflare: Workers & Pages → KV → Create namespace → MINES_KV
-[[kv_namespaces]]
-binding = "MINES_KV"
-id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
+# Создайте Cloudflare D1 Database и подставьте database_id.
+# В интерфейсе Cloudflare: Workers & Pages → D1 SQL Database → Create database
+[[d1_databases]]
+binding = "DB"
+database_name = "mines_db"
+database_id = "PUT_YOUR_D1_DATABASE_ID_HERE"
 
 # Переменные лучше задать в Cloudflare Dashboard → Worker → Settings → Variables.
 # PARTNER_URL = "https://partner-site.example"
