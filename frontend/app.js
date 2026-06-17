@@ -270,3 +270,28 @@ cashoutBtn.addEventListener('click', collectWin);
 renderBoard();
 sync();
 updateMaxWinPanel();
+
+// Отключение случайного zoom на телефонах: double tap и pinch zoom
+let lastTouchEnd = 0;
+
+document.addEventListener('touchend', function (event) {
+  const now = Date.now();
+
+  if (now - lastTouchEnd <= 300) {
+    event.preventDefault();
+  }
+
+  lastTouchEnd = now;
+}, { passive: false });
+
+document.addEventListener('gesturestart', function (event) {
+  event.preventDefault();
+}, { passive: false });
+
+document.addEventListener('gesturechange', function (event) {
+  event.preventDefault();
+}, { passive: false });
+
+document.addEventListener('gestureend', function (event) {
+  event.preventDefault();
+}, { passive: false });

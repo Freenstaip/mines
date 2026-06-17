@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800;900&display=swap');
 
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{min-height:100%;margin:0}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+html,body{min-height:100%;margin:0;touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%}
 body{
   background:#070d1c;
   color:#fff;
