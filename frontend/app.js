@@ -296,30 +296,23 @@ document.addEventListener('gestureend', function (event) {
   event.preventDefault();
 }, { passive: false });
 
-
-// Жёсткая блокировка горизонтального движения страницы на телефонах.
-// Вертикальная прокрутка внутри .app остаётся рабочей.
+// Запрещаем только горизонтальный свайп страницы, вертикальная прокрутка остается рабочей
 let touchStartX = 0;
 let touchStartY = 0;
 
-window.addEventListener('scroll', () => {
-  if (window.scrollX !== 0) window.scrollTo(0, window.scrollY);
-}, { passive: true });
-
-document.addEventListener('touchstart', (event) => {
+document.addEventListener('touchstart', function (event) {
   if (!event.touches || event.touches.length !== 1) return;
   touchStartX = event.touches[0].clientX;
   touchStartY = event.touches[0].clientY;
 }, { passive: true });
 
-document.addEventListener('touchmove', (event) => {
+document.addEventListener('touchmove', function (event) {
   if (!event.touches || event.touches.length !== 1) return;
 
-  const touch = event.touches[0];
-  const dx = touch.clientX - touchStartX;
-  const dy = touch.clientY - touchStartY;
+  const dx = Math.abs(event.touches[0].clientX - touchStartX);
+  const dy = Math.abs(event.touches[0].clientY - touchStartY);
 
-  if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+  if (dx > dy && dx > 6) {
     event.preventDefault();
   }
 }, { passive: false });
