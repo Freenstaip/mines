@@ -57,6 +57,7 @@ async function ensureSchema(env) {
   // Важно: D1 иногда ругается на многострочный SQL при автодеплое через dashboard.
   // Поэтому схема записана одной строкой.
   await db.prepare("CREATE TABLE IF NOT EXISTS players (user_id TEXT PRIMARY KEY, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, visits INTEGER NOT NULL DEFAULT 0, games_played INTEGER NOT NULL DEFAULT 0, balance REAL NOT NULL DEFAULT 10, locked INTEGER NOT NULL DEFAULT 0, clicked_partner INTEGER NOT NULL DEFAULT 0, clicked_at INTEGER, reset_nonce TEXT NOT NULL DEFAULT '', trigger_after INTEGER NOT NULL DEFAULT 3, last_result TEXT)").run();
+  await db.prepare("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)").run();
 
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_players_first_seen ON players(first_seen)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_players_last_seen ON players(last_seen)").run();
@@ -88,6 +89,16 @@ function randomTriggerAfter() {
   return Math.floor(Math.random() * 3) + 3;
 }
 
+async function getGlobalResetNonce(env) {
+  const row = await getDb(env).prepare("SELECT value FROM app_meta WHERE key = 'global_reset_nonce'").first();
+  return row?.value || '';
+}
+
+async function setGlobalResetNonce(env, nonce) {
+  await getDb(env).prepare("INSERT INTO app_meta (key, value) VALUES ('global_reset_nonce', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(nonce).run();
+  return nonce;
+}
+
 function rowToPlayer(row) {
   if (!row) return null;
   return {
@@ -117,10 +128,11 @@ async function readPlayer(env, userId) {
 
   const now = Date.now();
   const triggerAfter = randomTriggerAfter();
+  const resetNonce = await getGlobalResetNonce(env);
   await db.prepare(`
     INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, reset_nonce, trigger_after, username, first_name, last_name, language_code)
-    VALUES (?, ?, ?, 0, 0, 10, 0, 0, '', ?, '', '', '', '')
-  `).bind(String(userId), now, now, triggerAfter).run();
+    VALUES (?, ?, ?, 0, 0, 10, 0, 0, ?, ?, '', '', '', '')
+  `).bind(String(userId), now, now, resetNonce, triggerAfter).run();
 
   return {
     userId: String(userId),
@@ -131,7 +143,7 @@ async function readPlayer(env, userId) {
     balance: 10,
     locked: false,
     clickedPartner: false,
-    resetNonce: '',
+    resetNonce,
     triggerAfter,
     lastResult: '',
     username: '',
@@ -421,7 +433,9 @@ function formatPlayerName(p) {
 async function resetAllStats(env) {
   const db = getDb(env);
   const count = await db.prepare('SELECT COUNT(*) AS count FROM players').first('count');
+  const nonce = crypto.randomUUID();
   await db.prepare('DELETE FROM players').run();
+  await setGlobalResetNonce(env, nonce);
   return Number(count || 0);
 }
 
