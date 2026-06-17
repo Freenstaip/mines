@@ -173,16 +173,23 @@ async function getPlayer(request, env) {
   const player = await readPlayer(env, userId);
   const updated = await updatePlayer(env, userId, { visits: Number(player.visits || 0) + 1 });
 
+  const shouldLock = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3) || Number(updated.balance || 0) <= 0;
+  const finalPlayer = shouldLock && !updated.locked
+    ? await updatePlayer(env, userId, { locked: true })
+    : updated;
+
   return json({
     ok: true,
     userId,
-    locked: Boolean(updated.locked),
-    clickedPartner: Boolean(updated.clickedPartner),
-    resetNonce: updated.resetNonce || '',
+    locked: Boolean(finalPlayer.locked),
+    clickedPartner: Boolean(finalPlayer.clickedPartner),
+    resetNonce: finalPlayer.resetNonce || '',
+    triggerAfter: Number(finalPlayer.triggerAfter || 3),
+    gamesPlayed: Number(finalPlayer.gamesPlayed || 0),
+    balance: Number(finalPlayer.balance ?? 10),
     partnerUrl: partnerUrl(env)
   });
 }
-
 async function trackEvent(request, env) {
   const body = await request.json().catch(() => ({}));
   const userId = String(body.userId || request.headers.get('x-user-id') || 'demo-user');
@@ -214,7 +221,16 @@ async function trackEvent(request, env) {
     patch.balance ??= Number(body.state.balance ?? player.balance ?? 10);
   }
 
-  await updatePlayer(env, userId, patch);
+  const updated = await updatePlayer(env, userId, patch);
+
+  if (body.event === 'game_finished') {
+    const shouldLockByGames = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3);
+    const shouldLockByBalance = Number(updated.balance || 0) <= 0 && Number(updated.gamesPlayed || 0) <= 5;
+    if (shouldLockByGames || shouldLockByBalance) {
+      await updatePlayer(env, userId, { locked: true, lastResult: updated.lastResult || '' });
+    }
+  }
+
   return json({ ok: true });
 }
 
@@ -313,7 +329,7 @@ async function sendAdminPanel(env, chatId) {
 async function sendPushToNotClicked(env) {
   const { results } = await getDb(env).prepare(`
     SELECT user_id FROM players
-    WHERE locked = 1 AND clicked_partner = 0 AND user_id GLOB '[0-9]*'
+    WHERE clicked_partner = 0 AND user_id GLOB '[0-9]*'
   `).all();
 
   let sent = 0;
