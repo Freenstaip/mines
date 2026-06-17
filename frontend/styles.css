@@ -230,3 +230,87 @@ body {
     overflow-x: clip;
   }
 }
+
+
+/* FINAL MOBILE CENTERING FIX
+   Держим страницу по центру, запрещаем горизонтальный сдвиг,
+   но НЕ блокируем вертикальную прокрутку. */
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+}
+
+body {
+  display: block;
+  position: relative;
+  background: #070d1c;
+}
+
+.app {
+  width: 100%;
+  max-width: 520px;
+  min-width: 0;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 14px;
+  padding-right: 14px;
+  overflow-x: hidden;
+  touch-action: pan-y manipulation;
+}
+
+.header,
+.board-wrap,
+.info-card,
+.bet-card {
+  width: 100%;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.board-wrap,
+.info-card,
+.bet-card {
+  max-width: calc(100vw - 28px);
+}
+
+.board,
+.info-card,
+.bet-row,
+.multiplier-strip,
+.traps {
+  min-width: 0;
+}
+
+.cell,
+.traps button,
+.bet-row button,
+.play,
+.cashout {
+  touch-action: manipulation;
+}
+
+@media (max-width: 390px) {
+  .app {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .board-wrap,
+  .info-card,
+  .bet-card {
+    max-width: calc(100vw - 24px);
+  }
+}
+
+@supports (overflow: clip) {
+  html,
+  body,
+  .app {
+    overflow-x: clip;
+  }
+}
