@@ -292,50 +292,64 @@ body {
   }
 }
 
-.partner-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(8px);
+.partner-modal{
+  position:fixed;
+  inset:0;
+  z-index:50;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+  background:rgba(4,8,18,.78);
+  backdrop-filter:blur(10px);
 }
-
-.partner-overlay.hidden { display: none; }
-
-.partner-modal {
-  width: min(360px, 100%);
-  border-radius: 24px;
-  padding: 24px;
-  background: #141923;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
-  text-align: center;
-  color: #fff;
+.partner-card{
+  width:min(100%,420px);
+  border-radius:28px;
+  padding:28px 22px 22px;
+  text-align:center;
+  background:linear-gradient(180deg,#1b2440,#10172b);
+  box-shadow:0 28px 70px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.08);
 }
-
-.partner-title {
-  font-size: 22px;
-  font-weight: 800;
-  margin-bottom: 10px;
+.partner-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:34px;
+  padding:0 14px;
+  border-radius:999px;
+  color:#07101d;
+  background:linear-gradient(90deg,#ff6715,#ffd25d,#ff9a20);
+  font-size:13px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.5px;
 }
-
-.partner-text {
-  font-size: 15px;
-  line-height: 1.45;
-  color: rgba(255,255,255,.82);
-  margin-bottom: 18px;
+.partner-card h2{
+  margin:18px 0 10px;
+  font-size:28px;
+  line-height:1.1;
+  font-weight:900;
 }
-
-.partner-button {
-  width: 100%;
-  border: 0;
-  border-radius: 16px;
-  padding: 15px 18px;
-  font-size: 16px;
-  font-weight: 800;
-  color: #10131a;
-  background: linear-gradient(180deg, #ffd666, #ffb800);
+.partner-card p{
+  margin:0 0 20px;
+  color:#aeb9d4;
+  font-size:16px;
+  line-height:1.45;
+  font-weight:700;
 }
+.partner-button{
+  width:100%;
+  border:0;
+  border-radius:18px;
+  padding:16px 18px;
+  color:#fff;
+  font-size:20px;
+  font-weight:900;
+  cursor:pointer;
+  background:linear-gradient(90deg,#ff6715,#ffd25d,#ff9a20);
+  background-size:180% 100%;
+  box-shadow:0 15px 30px rgba(255,122,28,.24),inset 0 0 0 1px rgba(255,255,255,.3);
+  animation:buttonShine 2.8s ease-in-out infinite;
+}
+button:disabled{opacity:.55;cursor:not-allowed}

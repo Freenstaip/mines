@@ -12,15 +12,21 @@ const playBtn = document.querySelector('#playBtn');
 const cashoutBtn = document.querySelector('#cashoutBtn');
 const cashoutValue = document.querySelector('#cashoutValue');
 const multiplierStrip = document.querySelector('#multiplierStrip');
+const partnerModal = document.querySelector('#partnerModal');
+const partnerTitle = document.querySelector('#partnerTitle');
+const partnerText = document.querySelector('#partnerText');
+const partnerButton = document.querySelector('#partnerButton');
 
 const START_BALANCE = 10;
-const userId = tg?.initDataUnsafe?.user?.id || 'demo-user';
-const storageKey = `mines-demo-balance:${userId}`;
-const stateKey = `mines-demo-state:${userId}`;
-const PARTNER_URL = window.MINES_PARTNER_URL || 'https://partner-site.example';
+const DEFAULT_PARTNER_URL = 'https://example.com';
+const userId = String(tg?.initDataUnsafe?.user?.id || localStorage.getItem('mines-demo-user-id') || 'demo-user');
+localStorage.setItem('mines-demo-user-id', userId);
 
+const storageKey = `mines-demo-state:${userId}`;
+const legacyBalanceKey = `mines-demo-balance:${userId}`;
 
-let balance = readBalance();
+let appState = readState();
+let balance = appState.balance;
 let bet = 0.20;
 const TRAP_OPTIONS = [1, 3, 5, 7];
 let trapOptionIndex = 0;
@@ -29,155 +35,41 @@ let active = false;
 let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
-let playerState = readPlayerState();
+let partnerUrl = DEFAULT_PARTNER_URL;
+let locked = Boolean(appState.locked);
 
-function readPlayerState() {
+function readState() {
   try {
-    const saved = JSON.parse(localStorage.getItem(stateKey) || '{}');
-    return {
-      gamesPlayed: Number(saved.gamesPlayed || 0),
-      limitAfterGames: Number(saved.limitAfterGames || randomLimit()),
-      locked: Boolean(saved.locked),
-      linkClicked: Boolean(saved.linkClicked),
-      lockReason: saved.lockReason || '',
-      remoteResetAt: Number(saved.remoteResetAt || 0)
-    };
-  } catch {
-    return { gamesPlayed: 0, limitAfterGames: randomLimit(), locked: false, linkClicked: false, lockReason: '', remoteResetAt: 0 };
-  }
-}
-
-function randomLimit() {
-  return Math.floor(Math.random() * 3) + 3; // 3, 4 или 5 игр
-}
-
-function savePlayerState() {
-  localStorage.setItem(stateKey, JSON.stringify(playerState));
-}
-
-
-async function syncRemoteState() {
-  try {
-    const response = await fetch(`/api/state?userId=${encodeURIComponent(userId)}`);
-    if (!response.ok) return;
-    const remote = await response.json();
-    const remoteResetAt = Number(remote.resetAt || 0);
-
-    if (remoteResetAt > Number(playerState.remoteResetAt || 0)) {
-      playerState = {
-        gamesPlayed: 0,
-        limitAfterGames: randomLimit(),
-        locked: false,
-        linkClicked: false,
-        lockReason: '',
-        remoteResetAt
-      };
-      balance = START_BALANCE;
-      saveBalance();
-      savePlayerState();
-      hidePartnerOverlay();
-      renderBoard();
-      sync();
-    }
+    const parsed = JSON.parse(localStorage.getItem(storageKey) || '{}');
+    if (Number.isFinite(parsed.balance)) return normalizeState(parsed);
   } catch {}
+
+  const legacyBalance = Number(localStorage.getItem(legacyBalanceKey));
+  return normalizeState({ balance: Number.isFinite(legacyBalance) && legacyBalance > 0 ? legacyBalance : START_BALANCE });
 }
 
-function track(event, extra = {}) {
-  fetch('/api/event', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId, event, ...extra })
-  }).catch(() => {});
+function normalizeState(state) {
+  return {
+    balance: Number.isFinite(Number(state.balance)) ? Number(Number(state.balance).toFixed(2)) : START_BALANCE,
+    gamesPlayed: Number.isFinite(Number(state.gamesPlayed)) ? Number(state.gamesPlayed) : 0,
+    triggerAfter: Number.isFinite(Number(state.triggerAfter)) ? Number(state.triggerAfter) : randomInt(3, 5),
+    locked: Boolean(state.locked),
+    clickedPartner: Boolean(state.clickedPartner),
+    popupShown: Boolean(state.popupShown),
+    createdAt: state.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
 }
 
-
-
-function ensurePartnerOverlay() {
-  let overlay = document.querySelector('#partnerOverlay');
-  if (overlay) return overlay;
-
-  overlay = document.createElement('div');
-  overlay.id = 'partnerOverlay';
-  overlay.className = 'partner-overlay hidden';
-  overlay.innerHTML = `
-    <div class="partner-modal">
-      <div class="partner-title">Продолжение игры</div>
-      <div id="partnerText" class="partner-text">Чтобы продолжить игру, перейдите на сайт партнёра.</div>
-      <button id="partnerGoBtn" class="partner-button" type="button">Перейти и продолжить</button>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-
-  overlay.querySelector('#partnerGoBtn').addEventListener('click', () => {
-    playerState.linkClicked = true;
-    playerState.locked = true;
-    savePlayerState();
-    track('partner_click');
-
-    if (tg?.openLink) tg.openLink(PARTNER_URL);
-    else window.location.href = PARTNER_URL;
-  });
-
-  return overlay;
+function saveState() {
+  appState.balance = Number(balance.toFixed(2));
+  appState.locked = Boolean(locked);
+  appState.updatedAt = new Date().toISOString();
+  localStorage.setItem(storageKey, JSON.stringify(appState));
 }
 
-function showPartnerOverlay(reason = 'games_limit') {
-  playerState.locked = true;
-  playerState.lockReason = reason;
-  savePlayerState();
-  track('locked', { reason, gamesPlayed: playerState.gamesPlayed });
-
-  active = false;
-  board?.classList.remove('game-active');
-  setControlsForGame(false);
-
-  const overlay = ensurePartnerOverlay();
-  const text = overlay.querySelector('#partnerText');
-  text.textContent = playerState.linkClicked
-    ? 'Игру можно продолжить на сайте партнёра. Нажмите кнопку ниже.'
-    : 'Демо-режим завершён. Чтобы продолжить игру, перейдите на сайт партнёра.';
-  overlay.classList.remove('hidden');
-}
-
-function hidePartnerOverlay() {
-  ensurePartnerOverlay().classList.add('hidden');
-}
-
-function checkLockOnReturn() {
-  if (playerState.locked) showPartnerOverlay(playerState.lockReason || 'return_after_lock');
-}
-
-function finishCountedGame(reason) {
-  playerState.gamesPlayed += 1;
-  savePlayerState();
-  track('game_finished', { reason, gamesPlayed: playerState.gamesPlayed, balance });
-
-  if (balance < 0.10 && playerState.gamesPlayed < 5) {
-    showPartnerOverlay('demo_balance_lost_before_5_games');
-    return true;
-  }
-
-  if (playerState.gamesPlayed >= playerState.limitAfterGames) {
-    showPartnerOverlay('games_limit');
-    return true;
-  }
-
-  return false;
-}
-
-function readBalance() {
-  const saved = Number(localStorage.getItem(storageKey));
-
-  if (!Number.isFinite(saved) || saved <= 0) {
-    localStorage.setItem(storageKey, money(START_BALANCE));
-    return START_BALANCE;
-  }
-
-  return saved;
-}
-
-function saveBalance() {
-  localStorage.setItem(storageKey, money(balance));
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function money(value) {
@@ -187,6 +79,56 @@ function money(value) {
 function showMessage(text) {
   if (tg?.showAlert) tg.showAlert(text);
   else alert(text);
+}
+
+async function api(path, options = {}) {
+  try {
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        'content-type': 'application/json',
+        'x-user-id': userId,
+        ...(options.headers || {})
+      }
+    });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function loadRemoteState() {
+  const remote = await api(`/api/player?userId=${encodeURIComponent(userId)}`);
+  if (!remote) {
+    applyLockIfNeeded();
+    return;
+  }
+
+  partnerUrl = remote.partnerUrl || partnerUrl;
+
+  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
+    appState = normalizeState({ resetNonce: remote.resetNonce, balance: START_BALANCE, triggerAfter: randomInt(3, 5) });
+    appState.resetNonce = remote.resetNonce;
+    balance = START_BALANCE;
+    locked = false;
+    saveState();
+  }
+
+  if (remote.locked || remote.clickedPartner) {
+    locked = true;
+    appState.locked = true;
+    appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
+    saveState();
+  }
+
+  applyLockIfNeeded();
+  sync();
+}
+
+async function track(event, extra = {}) {
+  const payload = { userId, event, state: appState, ...extra };
+  api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -237,8 +179,8 @@ function renderMultipliers() {
 }
 
 function updateMaxWinPanel() {
-  statusLabel.textContent = 'Max. win';
-  statusValue.textContent = `${money(calcMaxWin())} $`;
+  statusLabel.textContent = locked ? 'Continue' : 'Max. win';
+  statusValue.textContent = locked ? 'On site' : `${money(calcMaxWin())} $`;
   renderMultipliers();
 }
 
@@ -261,6 +203,8 @@ function sync(updatePanel = true) {
   balanceEl.textContent = `${money(balance)} $`;
   betEl.textContent = money(bet);
   trapCountEl.textContent = traps;
+  playBtn.disabled = locked;
+  cashoutBtn.disabled = locked;
 
   if (updatePanel) updateMaxWinPanel();
 }
@@ -276,6 +220,12 @@ function renderBoard() {
     cell.addEventListener('click', () => handleCellClick(i, cell));
     board.appendChild(cell);
   }
+  if (locked) lockBoard();
+}
+
+function lockBoard() {
+  document.querySelectorAll('.cell').forEach((cell) => cell.classList.add('disabled'));
+  board.classList.remove('game-active');
 }
 
 function setControlsForGame(isActive) {
@@ -284,11 +234,10 @@ function setControlsForGame(isActive) {
 }
 
 function startGame(firstClickIndex = null) {
-  if (playerState.locked) {
-    showPartnerOverlay(playerState.lockReason || 'locked');
+  if (locked) {
+    showPartnerModal('Игра уже доступна на сайте', 'Чтобы продолжить игру, перейдите на партнёрский сайт.');
     return false;
   }
-
   if (active) return true;
 
   if (bet > balance) {
@@ -302,7 +251,7 @@ function startGame(firstClickIndex = null) {
   currentWin = 0;
   active = true;
   balance = Number((balance - bet).toFixed(2));
-  saveBalance();
+  saveState();
 
   updateNextStepPanel();
   cashoutValue.textContent = '0.00$';
@@ -313,6 +262,10 @@ function startGame(firstClickIndex = null) {
 }
 
 function handleCellClick(index, cell) {
+  if (locked) {
+    showPartnerModal('Игра уже доступна на сайте', 'Чтобы продолжить игру, перейдите на партнёрский сайт.');
+    return;
+  }
   if (!active) {
     const started = startGame(index);
     if (!started) return;
@@ -323,7 +276,7 @@ function handleCellClick(index, cell) {
 }
 
 function openCell(index, cell) {
-  if (!active || opened.has(index) || !cell) return;
+  if (!active || opened.has(index) || !cell || locked) return;
 
   if (mines.has(index)) {
     cell.classList.add('open-mine', 'disabled', 'hit');
@@ -365,10 +318,11 @@ function finishLose() {
   statusValue.textContent = '0.00 $';
   renderMultipliers();
   sync(false);
-  finishCountedGame('lose');
+  finishRound('lose');
 }
 
 function collectWin() {
+  if (locked) return;
   if (!active) return;
   if (opened.size === 0) {
     showMessage('Сначала откройте хотя бы одну клетку');
@@ -377,7 +331,6 @@ function collectWin() {
 
   active = false;
   balance = Number((balance + currentWin).toFixed(2));
-  saveBalance();
   revealMines();
   board.classList.remove('game-active');
   setControlsForGame(false);
@@ -385,17 +338,72 @@ function collectWin() {
   statusValue.textContent = `${money(currentWin)} $`;
   renderMultipliers();
   sync(false);
-  finishCountedGame('cashout');
+  finishRound('win');
+}
+
+function finishRound(result) {
+  appState.gamesPlayed += 1;
+  saveState();
+  track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
+
+  const lostDemoBeforeFiveGames = balance <= 0 && appState.gamesPlayed < 5;
+  const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
+
+  if (lostDemoBeforeFiveGames) {
+    forcePartner('Демо-счёт закончился', 'Вы использовали демо-счёт 10$. Чтобы продолжить игру, перейдите на партнёрский сайт.');
+  } else if (playedEnough) {
+    forcePartner('Продолжение игры', 'Демо-режим завершён. Для продолжения перейдите на партнёрский сайт.');
+  }
+}
+
+function forcePartner(title, text) {
+  locked = true;
+  appState.locked = true;
+  appState.popupShown = true;
+  active = false;
+  saveState();
+  track('locked', { reason: title });
+  lockBoard();
+  setControlsForGame(false);
+  sync();
+  setTimeout(() => showPartnerModal(title, text), 500);
+}
+
+function showPartnerModal(title, text) {
+  partnerTitle.textContent = title;
+  partnerText.textContent = appState.clickedPartner
+    ? 'Игру можно продолжить на сайте. Нажмите кнопку ниже, чтобы перейти.'
+    : text;
+  partnerModal.classList.remove('hidden');
+  partnerModal.setAttribute('aria-hidden', 'false');
+}
+
+function applyLockIfNeeded() {
+  if (!locked) return;
+  lockBoard();
+  setControlsForGame(false);
+  sync();
+  showPartnerModal('Игра уже доступна на сайте', 'Игру можно продолжить на сайте. Нажмите кнопку ниже, чтобы перейти.');
+}
+
+function openPartner() {
+  appState.clickedPartner = true;
+  locked = true;
+  saveState();
+  track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+
+  if (tg?.openLink) tg.openLink(partnerUrl);
+  else window.location.href = partnerUrl;
 }
 
 function changeBet(delta) {
-  if (active) return;
+  if (active || locked) return;
   bet = Math.max(0.10, Number((bet + delta).toFixed(2)));
   sync();
 }
 
 function changeTraps(delta) {
-  if (active) return;
+  if (active || locked) return;
 
   trapOptionIndex += delta;
   if (trapOptionIndex < 0) trapOptionIndex = TRAP_OPTIONS.length - 1;
@@ -411,13 +419,19 @@ document.querySelector('#trapMinus').addEventListener('click', () => changeTraps
 document.querySelector('#trapPlus').addEventListener('click', () => changeTraps(1));
 playBtn.addEventListener('click', () => startGame());
 cashoutBtn.addEventListener('click', collectWin);
+partnerButton.addEventListener('click', openPartner);
 
 renderBoard();
 sync();
-track('open');
-checkLockOnReturn();
-syncRemoteState();
 updateMaxWinPanel();
+loadRemoteState();
+track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && locked) {
+    showPartnerModal('Игра уже доступна на сайте', 'Игру можно продолжить на сайте. Нажмите кнопку ниже, чтобы перейти.');
+  }
+});
 
 // Отключение случайного zoom на телефонах: double tap и pinch zoom
 let lastTouchEnd = 0;
