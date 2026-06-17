@@ -572,7 +572,9 @@ body.android-webview .partner-modal {
   }
 }
 
-/* Android scroll bottom fix: allow scrolling to the Start button without leaving a large empty tail */
+/* Android Telegram/Browser bottom-bar fix.
+   Android navigation bars overlay the page, so the Start button needs a small
+   scroll reserve below it. The reserve is Android-only to avoid changing iPhone. */
 @media (max-width: 520px) {
   html,
   body {
@@ -584,7 +586,6 @@ body.android-webview .partner-modal {
 
   .app {
     min-height: auto !important;
-    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px)) !important;
   }
 
   .bet-card {
@@ -594,5 +595,13 @@ body.android-webview .partner-modal {
   .play,
   .cashout {
     margin-bottom: 0 !important;
+  }
+
+  body.android-webview .app {
+    padding-bottom: calc(78px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  body:not(.android-webview) .app {
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)) !important;
   }
 }
