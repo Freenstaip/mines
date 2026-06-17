@@ -89,7 +89,7 @@ body{
   background:linear-gradient(180deg,#181e34,#12182c);
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 14px 34px rgba(0,0,0,.26);
 }
-.info-card{display:flex;align-items:center;justify-content:flex-start;gap:12px}
+.info-card{display:flex;align-items:center;justify-content:flex-start;gap:12px;overflow:hidden}
 .info-left{display:flex;align-items:center;gap:12px;min-width:150px;flex:0 0 auto}
 .info-left img{width:54px;height:54px;object-fit:cover;border-radius:16px;flex:0 0 auto;filter:drop-shadow(0 8px 16px rgba(255,173,36,.34))}
 .info-left span{display:block;color:#43f28f;font-weight:900;font-size:14px;letter-spacing:.2px}
@@ -133,9 +133,11 @@ body{
 .play:active,.cashout:active{transform:scale(.97)}
 .cashout strong{display:block;font-size:28px;font-weight:900}
 .hidden{display:none!important}
-.multiplier-strip{display:flex;align-items:center;gap:12px;flex:1;min-width:0;padding-left:18px;margin-left:8px;border-left:4px solid rgba(118,133,170,.28)}
+.multiplier-strip{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;max-width:100%;padding-left:16px;margin-left:6px;border-left:4px solid rgba(118,133,170,.28);overflow:hidden}
 .multiplier{
-  min-width:78px;
+  flex:1 1 0;
+  min-width:0;
+  max-width:78px;
   text-align:center;
   padding:13px 12px;
   border-radius:17px;
@@ -169,6 +171,18 @@ body{
   .info-left img{width:48px;height:48px}
   .info-left strong{font-size:20px}
   .bet-row strong{font-size:28px}
-  .multiplier-strip{gap:8px;padding-left:12px;margin-left:2px}
-  .multiplier{min-width:62px;padding:11px 8px;font-size:18px}
+  .info-card{gap:8px}
+  .info-left{min-width:118px;gap:8px}
+  .multiplier-strip{gap:7px;padding-left:10px;margin-left:0;border-left-width:3px}
+  .multiplier{max-width:58px;padding:11px 5px;font-size:17px;border-radius:14px}
+}
+
+
+@media(max-width:340px){
+  .info-left{min-width:104px}
+  .info-left img{width:42px;height:42px}
+  .info-left span{font-size:12px}
+  .info-left strong{font-size:18px}
+  .multiplier-strip{gap:5px;padding-left:8px}
+  .multiplier{max-width:50px;padding:10px 4px;font-size:15px;border-radius:12px}
 }
