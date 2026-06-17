@@ -353,3 +353,55 @@ body {
   animation:buttonShine 2.8s ease-in-out infinite;
 }
 button:disabled{opacity:.55;cursor:not-allowed}
+
+
+/* Android Telegram WebView compatibility patch */
+:root {
+  --app-height: 100dvh;
+  --board-cell-size: 54px;
+}
+
+html, body {
+  min-height: var(--app-height);
+}
+
+.app {
+  min-height: var(--app-height) !important;
+}
+
+.board {
+  width: 100%;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.cell {
+  min-height: var(--board-cell-size);
+  height: var(--board-cell-size);
+  width: 100%;
+  display: block;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+/* Fallback for older Android WebView versions where aspect-ratio can collapse buttons */
+@supports not (aspect-ratio: 1 / 1) {
+  .cell {
+    height: var(--board-cell-size) !important;
+  }
+}
+
+body.android-webview .partner-modal {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (max-width: 390px) {
+  :root { --board-cell-size: 50px; }
+  .board { gap: 10px; }
+}
+
+@media (max-width: 340px) {
+  :root { --board-cell-size: 44px; }
+  .board { gap: 8px; }
+}

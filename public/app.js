@@ -17,6 +17,36 @@ const partnerTitle = document.querySelector('#partnerTitle');
 const partnerText = document.querySelector('#partnerText');
 const partnerButton = document.querySelector('#partnerButton');
 
+
+function updateViewportAndBoardSize() {
+  const height = tg?.viewportStableHeight || tg?.viewportHeight || window.innerHeight;
+  if (height) {
+    document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`);
+  }
+
+  if (!board) return;
+  const boardWidth = board.clientWidth;
+  if (!boardWidth) return;
+
+  const computed = window.getComputedStyle(board);
+  const gap = Number.parseFloat(computed.columnGap || computed.gap || '0') || 0;
+  const cellSize = Math.max(38, Math.floor((boardWidth - gap * 4) / 5));
+  document.documentElement.style.setProperty('--board-cell-size', `${cellSize}px`);
+
+  board.querySelectorAll('.cell').forEach((cell) => {
+    cell.style.height = `${cellSize}px`;
+    cell.style.minHeight = `${cellSize}px`;
+  });
+}
+
+if (/Android/i.test(navigator.userAgent || '')) {
+  document.body.classList.add('android-webview');
+}
+
+window.addEventListener('resize', updateViewportAndBoardSize);
+window.addEventListener('orientationchange', () => setTimeout(updateViewportAndBoardSize, 250));
+tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
+
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://example.com';
 const tgUser = tg?.initDataUnsafe?.user || null;
@@ -244,6 +274,8 @@ function renderBoard() {
     cell.addEventListener('click', () => handleCellClick(i, cell));
     board.appendChild(cell);
   }
+  updateViewportAndBoardSize();
+  requestAnimationFrame(updateViewportAndBoardSize);
   if (locked) lockBoard();
 }
 
