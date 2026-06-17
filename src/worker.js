@@ -306,6 +306,23 @@ async function telegramWebhook(request, env) {
     return json({ ok: true });
   }
 
+  if (data === 'admin_reset_all_confirm' || text.startsWith('/reset_all')) {
+    await sendMessage(env, chatId, '⚠️ Подтвердите полный сброс статистики. Будут удалены все игроки, переходы, балансы, лимиты игр и блокировки. После следующего входа игроки начнут заново.', {
+      inline_keyboard: [
+        [{ text: '✅ Да, сбросить всё', callback_data: 'admin_reset_all_execute' }],
+        [{ text: '❌ Отмена', callback_data: 'admin_refresh' }]
+      ]
+    });
+    return json({ ok: true });
+  }
+
+  if (data === 'admin_reset_all_execute') {
+    const deleted = await resetAllStats(env);
+    await sendMessage(env, chatId, `✅ Вся статистика сброшена. Удалено игроков: ${deleted}.`);
+    await sendAdminPanel(env, chatId);
+    return json({ ok: true });
+  }
+
   if (text.startsWith('/reset')) {
     const userId = text.split(/\s+/)[1];
     if (!userId) {
@@ -357,7 +374,8 @@ async function sendAdminPanel(env, chatId) {
       [{ text: '🔄 Обновить', callback_data: 'admin_refresh' }],
       [{ text: '👥 Игроки / ID', callback_data: 'admin_players' }],
       [{ text: '📩 Дожим', callback_data: 'admin_push' }],
-      [{ text: '♻️ Сброс игрока', callback_data: 'admin_reset_help' }]
+      [{ text: '♻️ Сброс игрока', callback_data: 'admin_reset_help' }],
+      [{ text: '🧹 Сбросить всю статистику', callback_data: 'admin_reset_all_confirm' }]
     ]
   });
 }
@@ -398,6 +416,13 @@ function formatPlayerName(p) {
   const username = p.username ? `@${p.username}` : '';
   const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ');
   return username || fullName || `Игрок ${p.user_id}`;
+}
+
+async function resetAllStats(env) {
+  const db = getDb(env);
+  const count = await db.prepare('SELECT COUNT(*) AS count FROM players').first('count');
+  await db.prepare('DELETE FROM players').run();
+  return Number(count || 0);
 }
 
 async function sendPushToNotClicked(env) {
