@@ -7,14 +7,17 @@ from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, MenuButtonWebApp
+from aiogram.exceptions import TelegramAPIError
 
-from storage import init_db, upsert_user, mark_clicked, stats, not_clicked_users, reset_players, reset_player
+try:
+    from storage import init_db, upsert_user, mark_clicked, stats, not_clicked_users, reset_players, reset_player
+except ImportError:
+    from bot.storage import init_db, upsert_user, mark_clicked, stats, not_clicked_users, reset_players, reset_player
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
 
-# Загружаем .env из нескольких мест, чтобы бот работал и при запуске из корня,
-# и при запуске из папки bot/.
+# .env можно положить либо в корень проекта, либо в папку bot/
 load_dotenv(PROJECT_DIR / ".env")
 load_dotenv(BASE_DIR / ".env", override=True)
 load_dotenv(override=False)
@@ -23,13 +26,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.pages.dev").strip()
-PARTNER_URL = os.getenv("PARTNER_URL", "https://partner-site.com").strip()
+WEBAPP_URL = os.getenv("WEBAPP_URL", "").strip()
+PARTNER_URL = os.getenv("PARTNER_URL", "").strip() or "https://partner-site.com"
 
 ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "").strip()
 ADMIN_IDS = {
     int(admin_id.strip())
-    for admin_id in ADMIN_IDS_RAW.split(",")
+    for admin_id in ADMIN_IDS_RAW.replace(";", ",").split(",")
     if admin_id.strip().isdigit()
 }
 
@@ -43,12 +46,14 @@ dp = Dispatcher()
 
 
 def is_admin(user_id: int) -> bool:
-    # Если ADMIN_IDS пустой, админка доступна всем. Это удобно для теста.
+    # Если ADMIN_IDS пустой, админка доступна всем — удобно для первичной проверки.
     # Для продакшена обязательно укажите ADMIN_IDS.
     return not ADMIN_IDS or user_id in ADMIN_IDS
 
 
-def game_keyboard() -> InlineKeyboardMarkup:
+def game_keyboard() -> InlineKeyboardMarkup | None:
+    if not WEBAPP_URL:
+        return None
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Start", web_app=WebAppInfo(url=WEBAPP_URL))]
     ])
@@ -95,10 +100,15 @@ async def start(message: types.Message):
         first_name=message.from_user.first_name,
     )
 
-    await message.answer(
-        "👋 Добро пожаловать в Mines!\n\nНажмите Start, чтобы начать демо-игру.",
-        reply_markup=game_keyboard(),
-    )
+    text = "👋 Добро пожаловать в Mines!"
+    keyboard = game_keyboard()
+
+    if keyboard:
+        text += "\n\nНажмите Start, чтобы начать демо-игру."
+        await message.answer(text, reply_markup=keyboard)
+    else:
+        text += "\n\nWEBAPP_URL не указан в .env, поэтому кнопка игры пока не создана."
+        await message.answer(text)
 
 
 @dp.message(Command("ping"))
@@ -106,7 +116,8 @@ async def ping(message: types.Message):
     await message.answer(
         "✅ Бот работает.\n"
         f"Ваш Telegram ID: {message.from_user.id}\n"
-        f"ADMIN_IDS загружен: {'да' if ADMIN_IDS else 'нет, тестовый режим'}"
+        f"ADMIN_IDS из .env: {ADMIN_IDS_RAW or '(пусто — доступ всем)'}\n"
+        f"WEBAPP_URL: {WEBAPP_URL or '(не указан)'}"
     )
 
 
@@ -213,13 +224,21 @@ async def reset_one_player(message: types.Message):
 async def main():
     init_db()
     logger.info("Бот запускается")
-    logger.info("WEBAPP_URL=%s", WEBAPP_URL)
+    logger.info("WEBAPP_URL=%s", WEBAPP_URL or "не указан")
     logger.info("PARTNER_URL=%s", PARTNER_URL)
     logger.info("ADMIN_IDS=%s", sorted(ADMIN_IDS) if ADMIN_IDS else "пусто, тестовый режим")
 
-    await bot.set_chat_menu_button(
-        menu_button=MenuButtonWebApp(text="Mini App", web_app=WebAppInfo(url=WEBAPP_URL))
-    )
+    # ВАЖНО: если WEBAPP_URL неверный или домен не настроен в BotFather,
+    # Telegram может вернуть ошибку. Раньше это останавливало весь бот,
+    # из-за чего /admin не работал. Теперь бот всё равно запускается.
+    if WEBAPP_URL:
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="Mini App", web_app=WebAppInfo(url=WEBAPP_URL))
+            )
+        except TelegramAPIError as exc:
+            logger.warning("Не удалось установить кнопку Mini App: %s", exc)
+
     await dp.start_polling(bot)
 
 
