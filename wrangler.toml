@@ -1,0 +1,7 @@
+name = "mines"
+compatibility_date = "2025-01-01"
+main = "src/worker.js"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"

@@ -1,0 +1,2 @@
+# Static assets are only inside ./public
+# Server-side Worker code is in ./src/worker.js and must not be uploaded as a public asset.
