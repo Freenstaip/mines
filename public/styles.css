@@ -51,10 +51,7 @@ body{
   aspect-ratio:1/1;
   border:0;
   border-radius:18px;
-  background:
-    radial-gradient(circle at 32% 24%, rgba(255,255,255,.13), transparent 28%),
-    linear-gradient(180deg,#222a4c 0%,#171f39 48%,#11182c 100%);
-  background-color:#151d36;
+  background:url('./assets/cell.png') center/cover no-repeat;
   box-shadow:0 8px 0 #061126,0 0 0 4px #121a32,0 12px 18px rgba(0,0,0,.25);
   cursor:pointer;
   transform:translateZ(0);
@@ -74,17 +71,11 @@ body{
 .cell:active{transform:scale(.92)}
 .game-active .cell:not(.disabled){animation:idleFloat 2.2s ease-in-out infinite}
 .cell.open-star{
-  background:
-    radial-gradient(circle at 50% 42%, rgba(255,230,118,.28), transparent 46%),
-    linear-gradient(180deg,#ffcf56 0%,#f99716 55%,#b64709 100%);
-  background-color:#f9a51c;
+  background:url('./assets/star.png') center/112% no-repeat;
   box-shadow:0 6px 0 #351705,0 0 0 4px rgba(255,191,55,.32),0 0 24px rgba(255,184,45,.45);
 }
 .cell.open-mine{
-  background:
-    radial-gradient(circle at 50% 42%, rgba(255,255,255,.10), transparent 40%),
-    linear-gradient(180deg,#26304f 0%,#151b32 58%,#080e1e 100%);
-  background-color:#12182c;
+  background:url('./assets/mine-x.png') center/112% no-repeat;
   box-shadow:0 6px 0 #061126,0 0 0 4px rgba(56,190,255,.28),0 0 24px rgba(0,196,255,.34);
 }
 .cell.opened-pop{animation:flipPop .44s cubic-bezier(.16,1,.3,1) both}
@@ -161,57 +152,6 @@ body{
 .multiplier.muted{opacity:.38}
 .multiplier.active{opacity:1;animation:nextPulse 1.3s ease-in-out infinite}
 .info-card:has(.multiplier-strip:not(.hidden)) .traps{display:none}
-
-/* Android/Telegram WebView safe visuals: no PNG dependency for game cells */
-.cell::before{
-  content:'';
-  position:absolute;
-  inset:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  z-index:1;
-  pointer-events:none;
-  font-family:Arial,sans-serif;
-  font-weight:900;
-  line-height:1;
-}
-.cell.open-star::before{
-  content:'★';
-  color:#fff8a8;
-  font-size:clamp(24px,10vw,52px);
-  text-shadow:0 2px 0 rgba(154,78,0,.55),0 0 18px rgba(255,240,104,.85);
-}
-.cell.open-mine::before{
-  content:'✕';
-  color:#58d5ff;
-  font-size:clamp(26px,11vw,58px);
-  text-shadow:0 2px 0 rgba(0,35,70,.75),0 0 18px rgba(68,217,255,.7);
-}
-.cell.open-mine.hit::before{
-  color:#ff5c5c;
-  text-shadow:0 2px 0 rgba(80,0,0,.7),0 0 20px rgba(255,80,80,.85);
-}
-.info-left img{
-  display:none!important;
-}
-.info-left::before{
-  content:'★';
-  width:54px;
-  height:54px;
-  border-radius:16px;
-  flex:0 0 auto;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  color:#fff8a8;
-  font-size:34px;
-  background:linear-gradient(180deg,#ffce42,#ff7b19);
-  box-shadow:0 8px 16px rgba(255,173,36,.34), inset 0 0 0 1px rgba(255,255,255,.35);
-  text-shadow:0 2px 0 rgba(143,64,0,.55);
-}
-@media(max-width:390px){.info-left::before{width:48px;height:48px;font-size:30px}}
-@media(max-width:340px){.info-left::before{width:42px;height:42px;font-size:26px}}
 
 @keyframes boardGlow{0%,100%{box-shadow:0 0 24px rgba(68,217,255,.28),inset 0 0 30px rgba(0,0,0,.32)}50%{box-shadow:0 0 36px rgba(68,217,255,.42),inset 0 0 30px rgba(0,0,0,.32)}}
 @keyframes idleFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
@@ -413,3 +353,55 @@ body {
   animation:buttonShine 2.8s ease-in-out infinite;
 }
 button:disabled{opacity:.55;cursor:not-allowed}
+
+
+/* Android Telegram WebView compatibility patch */
+:root {
+  --app-height: 100dvh;
+  --board-cell-size: 54px;
+}
+
+html, body {
+  min-height: var(--app-height);
+}
+
+.app {
+  min-height: var(--app-height) !important;
+}
+
+.board {
+  width: 100%;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.cell {
+  min-height: var(--board-cell-size);
+  height: var(--board-cell-size);
+  width: 100%;
+  display: block;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+/* Fallback for older Android WebView versions where aspect-ratio can collapse buttons */
+@supports not (aspect-ratio: 1 / 1) {
+  .cell {
+    height: var(--board-cell-size) !important;
+  }
+}
+
+body.android-webview .partner-modal {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (max-width: 390px) {
+  :root { --board-cell-size: 50px; }
+  .board { gap: 10px; }
+}
+
+@media (max-width: 340px) {
+  :root { --board-cell-size: 44px; }
+  .board { gap: 8px; }
+}
