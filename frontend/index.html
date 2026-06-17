@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Mines</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <button class="back">‹ Back</button>
+      <div class="balance"><span>USD</span><strong id="balance">10.00</strong></div>
+      <button id="demoBtn" class="deposit">Demo 10.00$</button>
+    </header>
+
+    <section class="toolbar">
+      <button class="sound">🔇</button>
+      <div class="wallet">💼 <span id="wallet">10.00$</span></div>
+      <button class="help">? How to play</button>
+    </section>
+
+    <section class="board-wrap">
+      <div id="board" class="board"></div>
+    </section>
+
+    <section class="status-card">
+      <div class="status-left">
+        <img src="/assets/star.jpeg" alt="star" />
+        <div><span id="statusLabel">Demo balance</span><strong id="statusValue">10.00 $</strong></div>
+      </div>
+      <div class="traps">
+        <button id="trapMinus">‹</button>
+        <div><strong id="trapCount">1</strong><span>Traps</span></div>
+        <button id="trapPlus">›</button>
+      </div>
+    </section>
+
+    <section class="bet-card">
+      <div class="bet-row">
+        <button id="minus">−</button>
+        <strong><span id="bet">0.20</span> $</strong>
+        <button id="plus">+</button>
+      </div>
+      <button id="playBtn" class="play">Start</button>
+      <button id="cashoutBtn" class="cashout hidden">Collect <strong id="cashoutValue">0.00$</strong></button>
+    </section>
+
+    <nav class="bottom-nav">
+      <span>☰<b>Menu</b></span><span>⌂<b>Home</b></span><span class="active">⚙<b>Casino</b></span><span>$<b>Free money</b></span><span>⚽<b>Sports</b></span>
+    </nav>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
