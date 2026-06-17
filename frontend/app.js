@@ -295,3 +295,31 @@ document.addEventListener('gesturechange', function (event) {
 document.addEventListener('gestureend', function (event) {
   event.preventDefault();
 }, { passive: false });
+
+
+// Жёсткая блокировка горизонтального движения страницы на телефонах.
+// Вертикальная прокрутка внутри .app остаётся рабочей.
+let touchStartX = 0;
+let touchStartY = 0;
+
+window.addEventListener('scroll', () => {
+  if (window.scrollX !== 0) window.scrollTo(0, window.scrollY);
+}, { passive: true });
+
+document.addEventListener('touchstart', (event) => {
+  if (!event.touches || event.touches.length !== 1) return;
+  touchStartX = event.touches[0].clientX;
+  touchStartY = event.touches[0].clientY;
+}, { passive: true });
+
+document.addEventListener('touchmove', (event) => {
+  if (!event.touches || event.touches.length !== 1) return;
+
+  const touch = event.touches[0];
+  const dx = touch.clientX - touchStartX;
+  const dy = touch.clientY - touchStartY;
+
+  if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+    event.preventDefault();
+  }
+}, { passive: false });
