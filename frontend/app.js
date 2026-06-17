@@ -11,6 +11,7 @@ const statusValue = document.querySelector('#statusValue');
 const playBtn = document.querySelector('#playBtn');
 const cashoutBtn = document.querySelector('#cashoutBtn');
 const cashoutValue = document.querySelector('#cashoutValue');
+const multiplierStrip = document.querySelector('#multiplierStrip');
 
 const START_BALANCE = 10;
 const userId = tg?.initDataUnsafe?.user?.id || 'demo-user';
@@ -55,9 +56,19 @@ function coefficient(safeOpened, minesCount) {
   return Number(Math.pow(base, safeOpened).toFixed(2));
 }
 
+function multiplierForStep(step) {
+  if (step <= 0) return 1;
+  return coefficient(step, traps);
+}
+
 function calcWin(openedCount = opened.size) {
   if (openedCount <= 0) return 0;
-  return Number((bet * coefficient(openedCount, traps)).toFixed(2));
+  return Number((bet * multiplierForStep(openedCount)).toFixed(2));
+}
+
+function calcNextWin() {
+  const nextStep = Math.min(opened.size + 1, 25 - traps);
+  return Number((bet * multiplierForStep(nextStep)).toFixed(2));
 }
 
 function calcMaxWin() {
@@ -65,9 +76,38 @@ function calcMaxWin() {
   return calcWin(safeCells);
 }
 
+function renderMultipliers() {
+  if (!multiplierStrip) return;
+
+  multiplierStrip.innerHTML = '';
+
+  if (!active) {
+    multiplierStrip.classList.add('hidden');
+    return;
+  }
+
+  multiplierStrip.classList.remove('hidden');
+
+  const safeCells = 25 - traps;
+  for (let offset = 1; offset <= 3; offset += 1) {
+    const step = opened.size + offset;
+    const item = document.createElement('div');
+    item.className = `multiplier ${offset === 1 ? 'active' : 'muted'}`;
+    item.textContent = step <= safeCells ? `X${multiplierForStep(step).toFixed(2)}` : '—';
+    multiplierStrip.appendChild(item);
+  }
+}
+
 function updateMaxWinPanel() {
   statusLabel.textContent = 'Max. win';
   statusValue.textContent = `${money(calcMaxWin())} $`;
+  renderMultipliers();
+}
+
+function updateNextStepPanel() {
+  statusLabel.textContent = 'Next step';
+  statusValue.textContent = `${money(calcNextWin())} $`;
+  renderMultipliers();
 }
 
 function randomMines(count, safeIndex = null) {
@@ -120,10 +160,10 @@ function startGame(firstClickIndex = null) {
   balance = Number((balance - bet).toFixed(2));
   saveBalance();
 
-  updateMaxWinPanel();
+  updateNextStepPanel();
   cashoutValue.textContent = '0.00$';
   setControlsForGame(true);
-  sync();
+  sync(false);
   return true;
 }
 
@@ -151,7 +191,7 @@ function openCell(index, cell) {
 
   currentWin = calcWin(opened.size);
   cashoutValue.textContent = `${money(currentWin)}$`;
-  updateMaxWinPanel();
+  updateNextStepPanel();
 
   if (opened.size >= 25 - traps) collectWin();
 }
@@ -170,6 +210,7 @@ function finishLose() {
   setControlsForGame(false);
   statusLabel.textContent = 'You lose';
   statusValue.textContent = '0.00 $';
+  renderMultipliers();
   sync(false);
 }
 
@@ -187,6 +228,7 @@ function collectWin() {
   setControlsForGame(false);
   statusLabel.textContent = 'Collected';
   statusValue.textContent = `${money(currentWin)} $`;
+  renderMultipliers();
   sync(false);
 }
 
