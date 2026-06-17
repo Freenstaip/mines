@@ -16,6 +16,7 @@ const partnerModal = document.querySelector('#partnerModal');
 const partnerTitle = document.querySelector('#partnerTitle');
 const partnerText = document.querySelector('#partnerText');
 const partnerButton = document.querySelector('#partnerButton');
+const directPartnerBtn = document.querySelector('#directPartnerBtn');
 
 
 function updateViewportAndBoardSize() {
@@ -259,6 +260,7 @@ function sync(updatePanel = true) {
   trapCountEl.textContent = traps;
   playBtn.disabled = locked;
   cashoutBtn.disabled = locked;
+  if (directPartnerBtn) directPartnerBtn.disabled = locked;
 
   if (updatePanel) updateMaxWinPanel();
 }
@@ -286,6 +288,7 @@ function lockBoard() {
 
 function setControlsForGame(isActive) {
   playBtn.classList.toggle('hidden', isActive);
+  directPartnerBtn?.classList.toggle('hidden', isActive || locked);
   cashoutBtn.classList.toggle('hidden', !isActive);
 }
 
@@ -406,10 +409,14 @@ function finishRound(result) {
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
 
   if (lostDemoBeforeFiveGames) {
-    forcePartner('Демо-счёт закончился', 'Вы использовали демо-счёт 10$. Чтобы продолжить игру, перейдите на партнёрский сайт.');
+    forcePartner('Демо-счёт закончился', offerText());
   } else if (playedEnough) {
-    forcePartner('Продолжение игры', 'Демо-режим завершён. Для продолжения перейдите на партнёрский сайт.');
+    forcePartner('Продолжение игры', offerText());
   }
+}
+
+function offerText() {
+  return `Вы выиграли ${money(balance)}$. Для продолжения игры перейдите на сайт.`;
 }
 
 function forcePartner(title, text) {
@@ -452,6 +459,16 @@ function openPartner() {
   else window.location.href = partnerUrl;
 }
 
+function openDirectPartner() {
+  appState.clickedPartner = true;
+  locked = true;
+  saveState();
+  track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+
+  if (tg?.openLink) tg.openLink(partnerUrl);
+  else window.location.href = partnerUrl;
+}
+
 function changeBet(delta) {
   if (active || locked) return;
   bet = Math.max(0.10, Number((bet + delta).toFixed(2)));
@@ -476,6 +493,7 @@ document.querySelector('#trapPlus').addEventListener('click', () => changeTraps(
 playBtn.addEventListener('click', () => startGame());
 cashoutBtn.addEventListener('click', collectWin);
 partnerButton.addEventListener('click', openPartner);
+directPartnerBtn?.addEventListener('click', openDirectPartner);
 
 renderBoard();
 sync();
