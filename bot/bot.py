@@ -1,22 +1,11 @@
 import os
-import json
 import asyncio
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, MenuButtonWebApp
 
-from storage import (
-    init_db,
-    upsert_user,
-    mark_game_event,
-    mark_blocked,
-    mark_clicked,
-    stats,
-    not_clicked_users,
-    reset_players,
-    reset_player,
-)
+from storage import init_db, upsert_user, mark_clicked, stats, not_clicked_users, reset_players, reset_player
 
 load_dotenv()
 
@@ -37,7 +26,9 @@ dp = Dispatcher()
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+    # Если ADMIN_IDS не задан, /admin временно доступен всем.
+    # Для продакшена обязательно укажите ADMIN_IDS в .env.
+    return not ADMIN_IDS or user_id in ADMIN_IDS
 
 
 def game_keyboard() -> InlineKeyboardMarkup:
@@ -48,7 +39,13 @@ def game_keyboard() -> InlineKeyboardMarkup:
 
 def partner_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Продолжить игру", url=PARTNER_URL)]
+        [InlineKeyboardButton(text="Продолжить игру", callback_data="partner:go")]
+    ])
+
+
+def partner_url_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Перейти на сайт", url=PARTNER_URL)]
     ])
 
 
@@ -67,7 +64,6 @@ def admin_text() -> str:
         f"Всего игроков: {data['total']}\n"
         f"Игроков за 24ч: {data['users_24h']}\n"
         f"Перешли по ссылке: {data['clicked']}\n"
-        f"Заблокированы popup-ом: {data['blocked']}\n"
         f"Не перешли по ссылке: {data['not_clicked']}"
     )
 
@@ -79,52 +75,45 @@ async def start(message: types.Message):
         username=message.from_user.username,
         first_name=message.from_user.first_name,
     )
+
     await message.answer(
         "👋 Добро пожаловать в Mines!\n\nНажмите Start, чтобы начать демо-игру.",
         reply_markup=game_keyboard(),
     )
 
 
+@dp.callback_query(F.data == "partner:go")
+async def partner_go(callback: types.CallbackQuery):
+    mark_clicked(callback.from_user.id)
+    await callback.message.answer(
+        "Игру можно продолжить на сайте партнёра.",
+        reply_markup=partner_url_keyboard(),
+    )
+    await callback.answer("Ссылка отправлена")
+
+
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
     if not is_admin(message.from_user.id):
+        await message.answer(
+            "⛔️ У вас нет доступа к админке.\n\n"
+            f"Ваш Telegram ID: {message.from_user.id}\n"
+            "Добавьте его в ADMIN_IDS в .env и перезапустите бота."
+        )
         return
-
-    await message.answer(admin_text(), reply_markup=admin_keyboard())
-
-
-@dp.message(F.web_app_data)
-async def webapp_event(message: types.Message):
-    try:
-        data = json.loads(message.web_app_data.data)
-    except (json.JSONDecodeError, TypeError):
-        return
-
-    user_id = message.from_user.id
-    action = data.get("action")
-    games_count = int(data.get("games_count") or 0)
-    reason = data.get("reason")
 
     upsert_user(
-        user_id,
+        message.from_user.id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
     )
-
-    if action == "player_open":
-        mark_game_event(user_id, games_count=games_count, reason="player_open")
-    elif action == "game_finished":
-        mark_game_event(user_id, games_count=games_count, reason=reason)
-    elif action == "partner_popup":
-        mark_blocked(user_id, games_count=games_count, reason=reason)
-    elif action == "partner_click":
-        mark_clicked(user_id)
+    await message.answer(admin_text(), reply_markup=admin_keyboard())
 
 
 @dp.callback_query(F.data == "admin:refresh")
 async def refresh_admin(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer()
+        await callback.answer("Нет доступа", show_alert=True)
         return
 
     await callback.message.edit_text(admin_text(), reply_markup=admin_keyboard())
@@ -134,13 +123,16 @@ async def refresh_admin(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "admin:push")
 async def push_not_clicked(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer()
+        await callback.answer("Нет доступа", show_alert=True)
         return
 
     sent = 0
     failed = 0
 
     for user_id in not_clicked_users():
+        if user_id == callback.from_user.id:
+            continue
+
         try:
             await bot.send_message(
                 user_id,
@@ -162,14 +154,12 @@ async def push_not_clicked(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "admin:reset_all")
 async def reset_all(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer()
+        await callback.answer("Нет доступа", show_alert=True)
         return
 
     reset_players()
     await callback.message.edit_text(
-        "♻️ Все игроки сброшены в статистике бота.\n\n"
-        "Важно: локальный прогресс в Mini App сбросится у пользователя только после очистки данных Telegram WebView или если добавить серверную проверку статуса.\n\n"
-        + admin_text(),
+        "♻️ Игроки сброшены в статистике бота.\n\n" + admin_text(),
         reply_markup=admin_keyboard(),
     )
     await callback.answer("Игроки сброшены")
@@ -178,6 +168,7 @@ async def reset_all(callback: types.CallbackQuery):
 @dp.message(Command("reset_player"))
 async def reset_one_player(message: types.Message):
     if not is_admin(message.from_user.id):
+        await message.answer("⛔️ Нет доступа")
         return
 
     parts = message.text.split(maxsplit=1)
