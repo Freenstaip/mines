@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>Mines</title>
+  <title>Mines Demo</title>
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
@@ -23,25 +23,25 @@
 
     <section class="info-card">
       <div class="info-left">
-        <img src="./assets/star.png" alt="" />
+        <img src="./assets/star.jpeg" alt="" />
         <div>
-          <span id="statusLabel">Баланс</span>
-          <strong id="statusValue">10.00 $</strong>
+          <span id="statusLabel">Max. win</span>
+          <strong id="statusValue">0.00 $</strong>
         </div>
       </div>
 
       <div class="traps">
-        <button id="trapMinus" type="button" aria-label="Уменьшить ловушки">‹</button>
+        <button id="trapMinus" type="button">‹</button>
         <div><strong id="trapCount">1</strong><span>Traps</span></div>
-        <button id="trapPlus" type="button" aria-label="Увеличить ловушки">›</button>
+        <button id="trapPlus" type="button">›</button>
       </div>
     </section>
 
     <section class="bet-card">
       <div class="bet-row">
-        <button id="minus" type="button" aria-label="Уменьшить ставку">−</button>
+        <button id="minus" type="button">−</button>
         <strong><span id="bet">0.20</span> $</strong>
-        <button id="plus" type="button" aria-label="Увеличить ставку">+</button>
+        <button id="plus" type="button">+</button>
       </div>
 
       <button id="playBtn" class="play" type="button">Start</button>
@@ -51,6 +51,6 @@
     </section>
   </main>
 
-  <script src="./app.js?v=3"></script>
+  <script src="./app.js"></script>
 </body>
 </html>

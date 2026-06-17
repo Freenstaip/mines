@@ -11,34 +11,25 @@ const statusValue = document.querySelector('#statusValue');
 const playBtn = document.querySelector('#playBtn');
 const cashoutBtn = document.querySelector('#cashoutBtn');
 const cashoutValue = document.querySelector('#cashoutValue');
-const minusBtn = document.querySelector('#minus');
-const plusBtn = document.querySelector('#plus');
-const trapMinusBtn = document.querySelector('#trapMinus');
-const trapPlusBtn = document.querySelector('#trapPlus');
 
 const START_BALANCE = 10;
-const MIN_BET = 0.10;
-const DEFAULT_BET = 0.20;
 const userId = tg?.initDataUnsafe?.user?.id || 'demo-user';
 const storageKey = `mines-demo-balance:${userId}`;
 
 let balance = readBalance();
-let bet = DEFAULT_BET;
-let traps = 1;
+let bet = 0.20;
+const TRAP_OPTIONS = [1, 3, 5, 7];
+let trapOptionIndex = 0;
+let traps = TRAP_OPTIONS[trapOptionIndex];
 let active = false;
 let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
 
-function money(value) {
-  return Number(value || 0).toFixed(2);
-}
-
 function readBalance() {
   const saved = Number(localStorage.getItem(storageKey));
 
-  // Если в браузере остался старый баланс 0 / NaN / отрицательный — выдаём новые демо $10.
-  if (!Number.isFinite(saved) || saved < MIN_BET) {
+  if (!Number.isFinite(saved) || saved <= 0) {
     localStorage.setItem(storageKey, money(START_BALANCE));
     return START_BALANCE;
   }
@@ -50,10 +41,8 @@ function saveBalance() {
   localStorage.setItem(storageKey, money(balance));
 }
 
-function resetDemoBalance() {
-  balance = START_BALANCE;
-  saveBalance();
-  sync();
+function money(value) {
+  return Number(value || 0).toFixed(2);
 }
 
 function showMessage(text) {
@@ -71,31 +60,41 @@ function calcWin(openedCount = opened.size) {
   return Number((bet * coefficient(openedCount, traps)).toFixed(2));
 }
 
+function calcMaxWin() {
+  const safeCells = 25 - traps;
+  return calcWin(safeCells);
+}
+
+function updateMaxWinPanel() {
+  statusLabel.textContent = 'Max. win';
+  statusValue.textContent = `${money(calcMaxWin())} $`;
+}
+
 function randomMines(count, safeIndex = null) {
   const result = new Set();
-
   while (result.size < count) {
     const index = Math.floor(Math.random() * 25);
     if (index !== safeIndex) result.add(index);
   }
-
   return result;
 }
 
-function sync() {
+function sync(updatePanel = true) {
   balanceEl.textContent = `${money(balance)} $`;
   betEl.textContent = money(bet);
   trapCountEl.textContent = traps;
+
+  if (updatePanel) updateMaxWinPanel();
 }
 
 function renderBoard() {
   board.innerHTML = '';
-
   for (let i = 0; i < 25; i += 1) {
     const cell = document.createElement('button');
     cell.className = 'cell';
     cell.type = 'button';
     cell.dataset.index = String(i);
+    cell.addEventListener('click', () => handleCellClick(i, cell));
     board.appendChild(cell);
   }
 }
@@ -107,17 +106,6 @@ function setControlsForGame(isActive) {
 
 function startGame(firstClickIndex = null) {
   if (active) return true;
-
-  // В демо-режиме баланс всегда должен стартовать с $10, если старое значение закончилось.
-  if (balance < MIN_BET) resetDemoBalance();
-
-  if (bet > balance) {
-    bet = Math.min(DEFAULT_BET, balance);
-    if (bet < MIN_BET) {
-      resetDemoBalance();
-      bet = DEFAULT_BET;
-    }
-  }
 
   if (bet > balance) {
     showMessage('Недостаточно демо-средств');
@@ -132,21 +120,20 @@ function startGame(firstClickIndex = null) {
   balance = Number((balance - bet).toFixed(2));
   saveBalance();
 
-  statusLabel.textContent = 'Current win';
-  statusValue.textContent = '0.00 $';
+  updateMaxWinPanel();
   cashoutValue.textContent = '0.00$';
   setControlsForGame(true);
   sync();
   return true;
 }
 
-function handleCellClick(index) {
+function handleCellClick(index, cell) {
   if (!active) {
     const started = startGame(index);
     if (!started) return;
+    cell = board.querySelector(`[data-index="${index}"]`);
   }
 
-  const cell = board.querySelector(`.cell[data-index="${index}"]`);
   openCell(index, cell);
 }
 
@@ -164,8 +151,7 @@ function openCell(index, cell) {
 
   currentWin = calcWin(opened.size);
   cashoutValue.textContent = `${money(currentWin)}$`;
-  statusLabel.textContent = 'Current win';
-  statusValue.textContent = `${money(currentWin)} $`;
+  updateMaxWinPanel();
 
   if (opened.size >= 25 - traps) collectWin();
 }
@@ -184,12 +170,11 @@ function finishLose() {
   setControlsForGame(false);
   statusLabel.textContent = 'You lose';
   statusValue.textContent = '0.00 $';
-  sync();
+  sync(false);
 }
 
 function collectWin() {
   if (!active) return;
-
   if (opened.size === 0) {
     showMessage('Сначала откройте хотя бы одну клетку');
     return;
@@ -202,36 +187,33 @@ function collectWin() {
   setControlsForGame(false);
   statusLabel.textContent = 'Collected';
   statusValue.textContent = `${money(currentWin)} $`;
-  sync();
+  sync(false);
 }
 
 function changeBet(delta) {
   if (active) return;
-  bet = Math.max(MIN_BET, Number((bet + delta).toFixed(2)));
-  if (bet > START_BALANCE) bet = START_BALANCE;
+  bet = Math.max(0.10, Number((bet + delta).toFixed(2)));
   sync();
 }
 
 function changeTraps(delta) {
   if (active) return;
-  traps = Math.min(24, Math.max(1, traps + delta));
+
+  trapOptionIndex += delta;
+  if (trapOptionIndex < 0) trapOptionIndex = TRAP_OPTIONS.length - 1;
+  if (trapOptionIndex >= TRAP_OPTIONS.length) trapOptionIndex = 0;
+
+  traps = TRAP_OPTIONS[trapOptionIndex];
   sync();
 }
 
-board.addEventListener('click', (event) => {
-  const cell = event.target.closest('.cell');
-  if (!cell || !board.contains(cell)) return;
-  handleCellClick(Number(cell.dataset.index));
-});
-
-minusBtn.addEventListener('click', () => changeBet(-0.10));
-plusBtn.addEventListener('click', () => changeBet(0.10));
-trapMinusBtn.addEventListener('click', () => changeTraps(-1));
-trapPlusBtn.addEventListener('click', () => changeTraps(1));
+document.querySelector('#minus').addEventListener('click', () => changeBet(-0.10));
+document.querySelector('#plus').addEventListener('click', () => changeBet(0.10));
+document.querySelector('#trapMinus').addEventListener('click', () => changeTraps(-1));
+document.querySelector('#trapPlus').addEventListener('click', () => changeTraps(1));
 playBtn.addEventListener('click', () => startGame());
 cashoutBtn.addEventListener('click', collectWin);
 
 renderBoard();
 sync();
-statusLabel.textContent = 'Balance';
-statusValue.textContent = `${money(balance)} $`;
+updateMaxWinPanel();
