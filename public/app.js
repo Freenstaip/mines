@@ -294,7 +294,7 @@ function setControlsForGame(isActive) {
 
 function startGame(firstClickIndex = null) {
   if (locked) {
-    showPartnerModal('Игра уже доступна на сайте', 'Чтобы продолжить игру, перейдите на партнёрский сайт.');
+    showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
     return false;
   }
   if (active) return true;
@@ -322,7 +322,7 @@ function startGame(firstClickIndex = null) {
 
 function handleCellClick(index, cell) {
   if (locked) {
-    showPartnerModal('Игра уже доступна на сайте', 'Чтобы продолжить игру, перейдите на партнёрский сайт.');
+    showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
     return;
   }
   if (!active) {
@@ -403,7 +403,7 @@ function collectWin() {
 function finishRound(result) {
   appState.gamesPlayed += 1;
   saveState();
-  track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
+  track('game_', { result, balance, gamesPlayed: appState.gamesPlayed });
 
   const lostBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
@@ -435,7 +435,7 @@ function forcePartner(title, text) {
 function showPartnerModal(title, text) {
   partnerTitle.textContent = title;
   partnerText.textContent = appState.clickedPartner
-    ? 'Игру можно продолжить на сайте. Нажмите кнопку ниже, чтобы перейти.'
+    ? 'You can continue the game on the website. Click the button below to proceed.'
     : text;
   partnerModal.classList.remove('hidden');
   partnerModal.setAttribute('aria-hidden', 'false');
@@ -446,7 +446,7 @@ function applyLockIfNeeded() {
   lockBoard();
   setControlsForGame(false);
   sync();
-  showPartnerModal('Игра уже доступна на сайте', 'Игру можно продолжить на сайте. Нажмите кнопку ниже, чтобы перейти.');
+  showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
 }
 
 function openPartner() {
@@ -503,7 +503,7 @@ track('visit', { balance, gamesPlayed: appState.gamesPlayed });
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
-    showPartnerModal('Игра уже доступна на сайте', 'Игру можно продолжить на сайте. Нажмите кнопку ниже, чтобы перейти.');
+    showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
   }
 });
 
