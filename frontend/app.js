@@ -22,6 +22,27 @@ const gamesCountKey = `${storagePrefix}:games-count`;
 const blockedKey = `${storagePrefix}:blocked`;
 const thresholdKey = `${storagePrefix}:partner-threshold`;
 const clickedKey = `${storagePrefix}:partner-clicked`;
+const tgUser = tg?.initDataUnsafe?.user || null;
+
+function apiEvent(payload = {}) {
+  if (userId === 'demo-user') return Promise.resolve();
+
+  return fetch('/api/event', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      userId,
+      username: tgUser?.username || '',
+      firstName: tgUser?.first_name || '',
+      ...payload,
+    }),
+  }).catch(() => {});
+}
+
+function partnerGoUrl() {
+  if (userId === 'demo-user') return PARTNER_URL;
+  return `/go?uid=${encodeURIComponent(userId)}`;
+}
 
 let balance = readBalance();
 let bet = 0.20;
@@ -96,17 +117,21 @@ function renderPartnerLock() {
 
   document.querySelector('#partnerGoBtn')?.addEventListener('click', () => {
     localStorage.setItem(clickedKey, '1');
-    window.location.href = PARTNER_URL;
+    apiEvent({ clicked: true, blocked: true, gamesCount: getGamesCount(), reason: 'partner_click' });
+    window.location.href = partnerGoUrl();
   });
 }
 
-function showPartnerModal() {
+function showPartnerModal(reason = 'partner_popup') {
   localStorage.setItem(blockedKey, '1');
+  apiEvent({ blocked: true, gamesCount: getGamesCount(), reason });
   renderPartnerLock();
 }
 
 function checkPartnerTrigger() {
-  if (isBlocked()) {
+  apiEvent({ gamesCount: getGamesCount(), blocked: isBlocked(), reason: 'app_open' });
+
+if (isBlocked()) {
     renderPartnerLock();
     return true;
   }
@@ -114,12 +139,12 @@ function checkPartnerTrigger() {
   const gamesCount = getGamesCount();
 
   if (gamesCount >= getPartnerThreshold()) {
-    showPartnerModal();
+    showPartnerModal('games_limit');
     return true;
   }
 
   if (balance <= 0 && gamesCount <= 5) {
-    showPartnerModal();
+    showPartnerModal('demo_balance_lost');
     return true;
   }
 
@@ -127,7 +152,9 @@ function checkPartnerTrigger() {
 }
 
 function markGameFinished() {
-  setGamesCount(getGamesCount() + 1);
+  const gamesCount = getGamesCount() + 1;
+  setGamesCount(gamesCount);
+  apiEvent({ gamesCount, blocked: isBlocked(), reason: 'game_finished' });
   checkPartnerTrigger();
 }
 
