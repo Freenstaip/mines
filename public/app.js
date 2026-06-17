@@ -49,7 +49,7 @@ window.addEventListener('orientationchange', () => setTimeout(updateViewportAndB
 tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 
 const START_BALANCE = 10;
-const DEFAULT_PARTNER_URL = 'https://example.com';
+const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
 const tgUser = tg?.initDataUnsafe?.user || null;
 const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || '-user');
 localStorage.setItem('mines--user-id', userId);
