@@ -49,6 +49,8 @@ window.addEventListener('orientationchange', () => setTimeout(updateViewportAndB
 tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 
 const START_BALANCE = 10;
+// Увеличивайте эту версию, когда нужно принудительно сбросить старое состояние WebView на телефонах.
+const CLIENT_RESET_VERSION = '2026-06-19-force-client-reset-v5';
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
 
 function parseTelegramUserFromInitData() {
@@ -68,6 +70,35 @@ function parseTelegramUserFromInitData() {
   }
 }
 
+
+function clearAllLocalGameState() {
+  try {
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (
+        key === 'mines--anonymous-user-id' ||
+        key === 'mines--last-user-id' ||
+        key === 'mines--client-reset-version' ||
+        key?.startsWith('mines--state:') ||
+        key?.startsWith('mines--balance:')
+      ) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((key) => localStorage.removeItem(key));
+    localStorage.setItem('mines--client-reset-version', CLIENT_RESET_VERSION);
+  } catch {}
+}
+
+function ensureClientResetVersion() {
+  try {
+    if (localStorage.getItem('mines--client-reset-version') !== CLIENT_RESET_VERSION) {
+      clearAllLocalGameState();
+    }
+  } catch {}
+}
+
 function getAnonymousUserId() {
   const key = 'mines--anonymous-user-id';
   let id = localStorage.getItem(key);
@@ -77,6 +108,8 @@ function getAnonymousUserId() {
   }
   return id;
 }
+
+ensureClientResetVersion();
 
 const tgUser = parseTelegramUserFromInitData();
 const userId = String(tgUser?.id || getAnonymousUserId());
@@ -99,7 +132,8 @@ let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
 let partnerUrl = DEFAULT_PARTNER_URL;
-let locked = Boolean(appState.locked);
+// Не доверяем старому локальному locked до ответа сервера: иначе старый Telegram WebView может показать партнёрское окно до статистики.
+let locked = false;
 
 function readState() {
   try {
@@ -176,19 +210,35 @@ async function loadRemoteState() {
   });
   const remote = await api(`/api/player?${params.toString()}`);
   if (!remote) {
-    applyLockIfNeeded();
+    // Если API не ответил, нельзя показывать старую локальную блокировку.
+    // Иначе игрок может увидеть партнёрское окно, а в админке его не будет.
+    locked = false;
+    appState = normalizeState({ balance: START_BALANCE, resetNonce: appState.resetNonce || '' });
+    balance = START_BALANCE;
+    saveState();
+    partnerModal.classList.add('hidden');
+    partnerModal.setAttribute('aria-hidden', 'true');
+    renderBoard();
+    setControlsForGame(false);
+    sync();
     return;
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
-  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
-  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
-  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
-  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
+  const resetChanged = remote.resetNonce && remote.resetNonce !== appState.resetNonce;
+  if (resetChanged) {
     localStorage.removeItem(storageKey);
     localStorage.removeItem(legacyBalanceKey);
-    appState = normalizeState({ resetNonce: remote.resetNonce, balance: START_BALANCE, triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5) });
+    appState = normalizeState({
+      resetNonce: remote.resetNonce,
+      balance: START_BALANCE,
+      gamesPlayed: 0,
+      locked: false,
+      clickedPartner: false,
+      popupShown: false,
+      triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5)
+    });
     appState.resetNonce = remote.resetNonce;
     balance = START_BALANCE;
     locked = false;
@@ -198,20 +248,22 @@ async function loadRemoteState() {
     renderBoard();
     setControlsForGame(false);
     saveState();
+  } else {
+    if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+    if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Number(remote.gamesPlayed);
+    if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
+    appState.resetNonce = remote.resetNonce || appState.resetNonce || '';
   }
 
-  if (remote.locked || remote.clickedPartner) {
-    locked = true;
-    appState.locked = true;
-    appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
-    saveState();
-  }
+  locked = Boolean(remote.locked || remote.clickedPartner);
+  appState.locked = locked;
+  appState.clickedPartner = Boolean(remote.clickedPartner);
+  appState.popupShown = locked;
 
   saveState();
   applyLockIfNeeded();
   sync();
 }
-
 async function track(event, extra = {}) {
   const payload = { userId, user: tgUser, event, state: appState, ...extra };
   return api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
