@@ -50,40 +50,9 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
-
-function parseTelegramUserFromInitData() {
-  const unsafeUser = tg?.initDataUnsafe?.user;
-  if (unsafeUser?.id) return unsafeUser;
-
-  try {
-    const initData = tg?.initData || '';
-    if (!initData) return null;
-    const params = new URLSearchParams(initData);
-    const rawUser = params.get('user');
-    if (!rawUser) return null;
-    const parsed = JSON.parse(rawUser);
-    return parsed?.id ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function getAnonymousUserId() {
-  const key = 'mines--anonymous-user-id';
-  let id = localStorage.getItem(key);
-  if (!id) {
-    id = `anon-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem(key, id);
-  }
-  return id;
-}
-
-const tgUser = parseTelegramUserFromInitData();
-const hasTelegramUser = Boolean(tgUser?.id);
-const userId = String(tgUser?.id || getAnonymousUserId());
-
-// Telegram ID всегда главный. localStorage используется только если Telegram не передал пользователя.
-localStorage.setItem('mines--last-user-id', userId);
+const tgUser = tg?.initDataUnsafe?.user || null;
+const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || '-user');
+localStorage.setItem('mines--user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
 const legacyBalanceKey = `mines--balance:${userId}`;
@@ -100,10 +69,6 @@ let opened = new Set();
 let currentWin = 0;
 let partnerUrl = DEFAULT_PARTNER_URL;
 let locked = Boolean(appState.locked);
-let pendingTracks = (() => {
-  try { return JSON.parse(localStorage.getItem('mines--pending-tracks') || '[]'); }
-  catch { return []; }
-})();
 
 function readState() {
   try {
@@ -153,12 +118,9 @@ async function api(path, options = {}) {
   try {
     const response = await fetch(path, {
       ...options,
-      cache: 'no-store',
       headers: {
         'content-type': 'application/json',
-        'cache-control': 'no-cache',
         'x-user-id': userId,
-        'x-tg-user-present': hasTelegramUser ? '1' : '0',
         'x-tg-username': tgUser?.username || '',
         'x-tg-first-name': tgUser?.first_name || '',
         'x-tg-last-name': tgUser?.last_name || '',
@@ -173,27 +135,15 @@ async function api(path, options = {}) {
   }
 }
 
-async function registerOnServer() {
+async function loadRemoteState() {
   const params = new URLSearchParams({
     userId,
-    hasTelegramUser: hasTelegramUser ? '1' : '0',
     username: tgUser?.username || '',
     firstName: tgUser?.first_name || '',
     lastName: tgUser?.last_name || '',
-    languageCode: tgUser?.language_code || '',
-    t: String(Date.now())
+    languageCode: tgUser?.language_code || ''
   });
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const remote = await api(`/api/player?${params.toString()}`);
-    if (remote?.ok) return remote;
-    await new Promise((resolve) => setTimeout(resolve, 250 + attempt * 350));
-  }
-  return null;
-}
-
-async function loadRemoteState() {
-  const remote = await registerOnServer();
+  const remote = await api(`/api/player?${params.toString()}`);
   if (!remote) {
     applyLockIfNeeded();
     return;
@@ -228,39 +178,12 @@ async function loadRemoteState() {
 
   saveState();
   applyLockIfNeeded();
-  await flushPendingTracks();
   sync();
 }
 
 async function track(event, extra = {}) {
-  const payload = {
-    userId,
-    user: tgUser,
-    hasTelegramUser,
-    initData: tg?.initData || '',
-    event,
-    state: appState,
-    clientTime: new Date().toISOString(),
-    ...extra
-  };
-
-  const result = await api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
-  if (!result?.ok) {
-    pendingTracks.push(payload);
-    localStorage.setItem('mines--pending-tracks', JSON.stringify(pendingTracks.slice(-50)));
-  }
-  return result;
-}
-
-async function flushPendingTracks() {
-  if (!pendingTracks.length) return;
-  const queue = pendingTracks.slice();
-  pendingTracks = [];
-  for (const payload of queue) {
-    const result = await api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
-    if (!result?.ok) pendingTracks.push(payload);
-  }
-  localStorage.setItem('mines--pending-tracks', JSON.stringify(pendingTracks.slice(-50)));
+  const payload = { userId, user: tgUser, event, state: appState, ...extra };
+  api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -480,7 +403,7 @@ function collectWin() {
 function finishRound(result) {
   appState.gamesPlayed += 1;
   saveState();
-  track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
+  track('game_', { result, balance, gamesPlayed: appState.gamesPlayed });
 
   const lostBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
@@ -572,17 +495,11 @@ cashoutBtn.addEventListener('click', collectWin);
 partnerButton.addEventListener('click', openPartner);
 directPartnerBtn?.addEventListener('click', openDirectPartner);
 
-async function initApp() {
-  renderBoard();
-  sync();
-  updateMaxWinPanel();
-  // Регистрируем визит сразу при открытии Mini App. Если первый запрос не пройдет, он попадет в очередь.
-  track('visit', { balance, gamesPlayed: appState.gamesPlayed, phase: 'startup' });
-  await loadRemoteState();
-  await track('visit', { balance, gamesPlayed: appState.gamesPlayed, phase: 'after_remote' });
-}
-
-initApp();
+renderBoard();
+sync();
+updateMaxWinPanel();
+loadRemoteState();
+track('visit', { balance, gamesPlayed: appState.gamesPlayed });
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
