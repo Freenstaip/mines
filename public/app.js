@@ -57,20 +57,6 @@ localStorage.setItem('mines--user-id', userId);
 const storageKey = `mines--state:${userId}`;
 const legacyBalanceKey = `mines--balance:${userId}`;
 
-function clearAllLocalMinesState() {
-  try {
-    Object.keys(localStorage).forEach((key) => {
-      if (key.startsWith('mines--state:') || key.startsWith('mines--balance:')) {
-        localStorage.removeItem(key);
-      }
-    });
-  } catch {}
-}
-
-if (new URLSearchParams(window.location.search).has('unlock')) {
-  clearAllLocalMinesState();
-}
-
 let appState = readState();
 let balance = appState.balance;
 let bet = 0.20;
@@ -186,77 +172,50 @@ async function loadRemoteState() {
     lastName: tgUser?.last_name || '',
     languageCode: tgUser?.language_code || ''
   });
-
   const remote = await api(`/api/player?${params.toString()}`);
   if (!remote) {
     applyLockIfNeeded();
-    return false;
+    return null;
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
 
-  // Самое важное: сначала проверяем resetNonce, и только потом переносим
-  // gamesPlayed/balance с телефона на сервер. Иначе после полного сброса
-  // старый localStorage снова записывает в D1 прошлые 3 игры и FINISHED.
-  const localResetNonce = appState.resetNonce || '';
-  const remoteResetNonce = remote.resetNonce || '';
-  const resetNonceChanged = Boolean(remoteResetNonce) && remoteResetNonce !== localResetNonce;
-
-  if (resetNonceChanged) {
+  // ВАЖНО: сначала проверяем resetNonce и только потом переносим gamesPlayed/balance.
+  // Иначе после полного сброса старый localStorage может успеть записать обратно
+  // 3 игры и снова заблокировать игрока.
+  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
     resetLocalGameState(remote);
-    appState.resetNonce = remoteResetNonce;
-    if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
-    balance = START_BALANCE;
-    locked = false;
-    saveState();
     sync();
-    return true;
+    return remote;
   }
 
-  if (Number.isFinite(Number(remote.triggerAfter))) {
-    appState.triggerAfter = Number(remote.triggerAfter);
-  }
+  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
+  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
-  if (Number.isFinite(Number(remote.gamesPlayed))) {
-    appState.gamesPlayed = Math.max(0, Number(remote.gamesPlayed));
-  }
-
-  if (Number.isFinite(Number(remote.balance)) && !active) {
-    balance = Number(remote.balance);
-  }
-
+  // Локальную блокировку НЕЛЬЗЯ автоматически снимать только потому, что сервер
+  // вернул нового/чистого игрока. Иначе после появления окна FINISHED пользователь
+  // может просто перезайти в игру и снова играть. Снятие блокировки происходит
+  // только при смене resetNonce после сброса через админку.
   if (remote.locked || remote.clickedPartner) {
     locked = true;
     appState.locked = true;
     appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
-  } else if (!appState.locked && !appState.clickedPartner) {
-    locked = false;
+    saveState();
   }
 
-  appState.resetNonce = remoteResetNonce || appState.resetNonce || '';
   saveState();
   applyLockIfNeeded();
   sync();
-  return true;
+  return remote;
 }
 
 async function track(event, extra = {}) {
-  const payload = { userId, user: tgUser, event, state: appState, ...extra };
-  const body = JSON.stringify(payload);
-
-  try {
-    if (navigator.sendBeacon) {
-      const blob = new Blob([body], { type: 'application/json' });
-      const sent = navigator.sendBeacon('/api/track', blob);
-      if (sent) return { ok: true, beacon: true };
-    }
-  } catch {}
-
-  return api('/api/track', {
-    method: 'POST',
-    body,
-    keepalive: true
-  });
+  const payload = { userId, user: tgUser, event, ...extra };
+  // Для visit не отправляем полный localStorage state, чтобы старые данные телефона
+  // не могли восстановить gamesPlayed после сброса статистики в админке.
+  if (event !== 'visit') payload.state = appState;
+  api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -492,21 +451,17 @@ function offerText() {
   return `You won ${money(balance)}$. To receive funds, go to the website.`;
 }
 
-async function forcePartner(title, text) {
+function forcePartner(title, text) {
   locked = true;
   appState.locked = true;
   appState.popupShown = true;
   active = false;
   saveState();
+  track('locked', { reason: title });
   lockBoard();
   setControlsForGame(false);
   sync();
-
-  // Важно дождаться записи locked в D1, иначе /players и «Дожим» могут не видеть игрока,
-  // а FINISHED будет храниться только на телефоне.
-  await track('locked', { reason: title, balance, gamesPlayed: appState.gamesPlayed });
-
-  setTimeout(() => showPartnerModal(title, text), 250);
+  setTimeout(() => showPartnerModal(title, text), 500);
 }
 
 function showPartnerModal(title, text) {
@@ -526,21 +481,21 @@ function applyLockIfNeeded() {
   showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
 }
 
-async function openPartner() {
+function openPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  await track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
 }
 
-async function openDirectPartner() {
+function openDirectPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  await track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
@@ -572,19 +527,15 @@ cashoutBtn.addEventListener('click', collectWin);
 partnerButton.addEventListener('click', openPartner);
 directPartnerBtn?.addEventListener('click', openDirectPartner);
 
-async function bootstrap() {
+async function initGame() {
   renderBoard();
   sync();
   updateMaxWinPanel();
-
-  // Ждём ответ сервера перед отправкой visit. Это защищает от ситуации,
-  // когда после админского сброса старые локальные gamesPlayed/locked
-  // с телефона повторно записываются в D1.
   await loadRemoteState();
   await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
 }
 
-bootstrap();
+initGame();
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
