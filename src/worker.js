@@ -1,4 +1,4 @@
-const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
+const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 
 export default {
   async fetch(request, env, ctx) {
@@ -295,7 +295,8 @@ async function trackEvent(request, env) {
     patch.visits = Number(player.visits || 0) + 1;
   }
 
-  const stateMatchesReset = !body.state?.resetNonce || body.state.resetNonce === player.resetNonce;
+  // При глобальном reset старые localStorage-данные телефона не должны возвращать старый баланс/прогресс.
+  const stateMatchesReset = Boolean(body.state?.resetNonce) && body.state.resetNonce === player.resetNonce;
 
   if (body.event === 'game_finished') {
     patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || (stateMatchesReset ? body.state?.gamesPlayed : 0) || 0));
@@ -303,7 +304,11 @@ async function trackEvent(request, env) {
     patch.balance = Number(body.balance ?? (stateMatchesReset ? body.state?.balance : undefined) ?? player.balance ?? 10);
   }
 
-  if (body.event === 'locked') patch.locked = true;
+  if (body.event === 'locked') {
+    patch.locked = true;
+    patch.balance = Number(body.balance ?? (stateMatchesReset ? body.state?.balance : undefined) ?? player.balance ?? 10);
+    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || (stateMatchesReset ? body.state?.gamesPlayed : 0) || 0));
+  }
 
   if (body.event === 'partner_click' || body.event === 'direct_partner_click') {
     patch.locked = true;
