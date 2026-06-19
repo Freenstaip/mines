@@ -51,12 +51,20 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
 const tgUser = tg?.initDataUnsafe?.user || null;
-const tgUserId = tgUser?.id ? String(tgUser.id) : '';
-let fallbackUserId = localStorage.getItem('mines--user-id') || '';
-if (!tgUserId && (!fallbackUserId || fallbackUserId === '-user' || fallbackUserId === 'demo-user')) {
-  fallbackUserId = `web-${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+function getStableUserId() {
+  if (tgUser?.id) return String(tgUser.id);
+
+  // Если Telegram по какой-то причине не отдал initDataUnsafe.user,
+  // не используем общий '-user': иначе разные телефоны смешиваются в одного игрока
+  // или вообще не видны как нормальные пользователи в статистике.
+  const saved = localStorage.getItem('mines--user-id');
+  if (saved && saved !== '-user' && saved !== 'demo-user') return saved;
+
+  const generated = `anon-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem('mines--user-id', generated);
+  return generated;
 }
-const userId = tgUserId || fallbackUserId;
+const userId = getStableUserId();
 localStorage.setItem('mines--user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
@@ -73,11 +81,7 @@ let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
 let partnerUrl = DEFAULT_PARTNER_URL;
-// Не блокируем игру только по старому localStorage: после сброса статистики
-// старый телефон может хранить locked=true. Блокировку применяем только
-// после ответа сервера или после новой игры в текущей сессии.
-let locked = false;
-appState.locked = false;
+let locked = Boolean(appState.locked);
 
 function readState() {
   try {
@@ -153,22 +157,34 @@ async function loadRemoteState() {
     languageCode: tgUser?.language_code || ''
   });
   const remote = await api(`/api/player?${params.toString()}`);
+
+  // Если сервер недоступен, сохраняем старое поведение: локальная блокировка не теряется.
   if (!remote) {
-    locked = false;
-    appState.locked = false;
-    partnerModal.classList.add('hidden');
-    partnerModal.setAttribute('aria-hidden', 'true');
-    saveState();
-    sync();
-    return;
+    applyLockIfNeeded();
+    return false;
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
-  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
+
+  const remoteResetNonce = remote.resetNonce || '';
+  const localResetNonce = appState.resetNonce || '';
+  const resetChanged = remoteResetNonce && remoteResetNonce !== localResetNonce;
+
+  // Главный фикс: если админ нажал "сброс всей статистики", сервер меняет resetNonce.
+  // Любое старое состояние телефона (locked/clickedPartner/gamesPlayed/balance) после этого
+  // полностью выбрасывается и больше не может показать партнёрское окно.
+  if (resetChanged) {
     localStorage.removeItem(storageKey);
     localStorage.removeItem(legacyBalanceKey);
-    appState = normalizeState({ resetNonce: remote.resetNonce, balance: START_BALANCE, triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5) });
-    appState.resetNonce = remote.resetNonce;
+    appState = normalizeState({
+      resetNonce: remoteResetNonce,
+      balance: START_BALANCE,
+      gamesPlayed: 0,
+      locked: false,
+      clickedPartner: false,
+      popupShown: false,
+      triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5)
+    });
     balance = START_BALANCE;
     locked = false;
     active = false;
@@ -177,27 +193,34 @@ async function loadRemoteState() {
     renderBoard();
     setControlsForGame(false);
     saveState();
-  }
+  } else {
+    appState.resetNonce = remoteResetNonce || localResetNonce;
+    if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+    if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
+    if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
-  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
-  // Сервер является источником правды после сброса. Не берём максимум со старого телефона.
-  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Number(remote.gamesPlayed);
-  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
-
-  if (remote.locked || remote.clickedPartner) {
-    locked = true;
-    appState.locked = true;
-    appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
+    // После обычного перезапуска окно должно остаться, если игрок уже дошёл до него.
+    // Но после resetChanged выше локальный locked специально игнорируется.
+    if (remote.locked || remote.clickedPartner || appState.locked || appState.clickedPartner) {
+      locked = true;
+      appState.locked = true;
+      appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
+    } else {
+      locked = false;
+      appState.locked = false;
+      appState.clickedPartner = false;
+      appState.popupShown = false;
+    }
     saveState();
   }
 
-  saveState();
   applyLockIfNeeded();
   sync();
+  return true;
 }
 
 async function track(event, extra = {}) {
-  const payload = { userId, user: tgUser, event, state: appState, resetNonce: appState.resetNonce || '', ...extra };
+  const payload = { userId, user: tgUser, event, state: appState, clientResetNonce: appState.resetNonce || '', ...extra };
   return api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
@@ -510,12 +533,19 @@ cashoutBtn.addEventListener('click', collectWin);
 partnerButton.addEventListener('click', openPartner);
 directPartnerBtn?.addEventListener('click', openDirectPartner);
 
-renderBoard();
-sync();
-updateMaxWinPanel();
-loadRemoteState().then(() => {
-  track('visit', { balance, gamesPlayed: appState.gamesPlayed });
-});
+async function initApp() {
+  renderBoard();
+  sync();
+  updateMaxWinPanel();
+
+  // Важно: сначала получаем состояние с сервера, и только потом отправляем visit.
+  // Иначе телефон со старым localStorage успевает отправить старый locked/gamesPlayed
+  // до того, как узнает про reset_all.
+  const loaded = await loadRemoteState();
+  if (loaded) await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+}
+
+initApp();
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
