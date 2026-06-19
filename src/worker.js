@@ -32,7 +32,7 @@ function corsHeaders() {
   return {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-user-id,x-tg-username,x-tg-first-name,x-tg-last-name,x-tg-language-code'
+    'access-control-allow-headers': 'content-type,x-user-id'
   };
 }
 
@@ -163,60 +163,6 @@ async function readPlayer(env, userId) {
   };
 }
 
-async function resetPlayerForCurrentNonce(env, userId, profile = {}) {
-  const now = Date.now();
-  const resetNonce = await getGlobalResetNonce(env);
-  const triggerAfter = randomTriggerAfter();
-  await getDb(env).prepare(`
-    INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, reset_nonce, trigger_after, last_result, username, first_name, last_name, language_code, direct_partner_click, direct_partner_clicked_at)
-    VALUES (?, ?, ?, 0, 0, 10, 0, 0, ?, ?, '', ?, ?, ?, ?, 0, NULL)
-    ON CONFLICT(user_id) DO UPDATE SET
-      last_seen = excluded.last_seen,
-      games_played = 0,
-      balance = 10,
-      locked = 0,
-      clicked_partner = 0,
-      clicked_at = NULL,
-      reset_nonce = excluded.reset_nonce,
-      trigger_after = excluded.trigger_after,
-      last_result = '',
-      username = COALESCE(NULLIF(excluded.username, ''), players.username),
-      first_name = COALESCE(NULLIF(excluded.first_name, ''), players.first_name),
-      last_name = COALESCE(NULLIF(excluded.last_name, ''), players.last_name),
-      language_code = COALESCE(NULLIF(excluded.language_code, ''), players.language_code),
-      direct_partner_click = 0,
-      direct_partner_clicked_at = NULL
-  `).bind(
-    String(userId),
-    now,
-    now,
-    resetNonce,
-    triggerAfter,
-    profile.username || '',
-    profile.firstName || '',
-    profile.lastName || '',
-    profile.languageCode || ''
-  ).run();
-
-  return rowToPlayer(await getDb(env).prepare('SELECT * FROM players WHERE user_id = ?').bind(String(userId)).first());
-}
-
-async function readFreshPlayer(env, userId, profile = {}) {
-  let player = await readPlayer(env, userId);
-  const globalNonce = await getGlobalResetNonce(env);
-  if ((globalNonce || '') !== (player.resetNonce || '')) {
-    player = await resetPlayerForCurrentNonce(env, userId, profile);
-  }
-  return player;
-}
-
-function stateBelongsToCurrentReset(body, player) {
-  const incomingNonce = body.resetNonce || body.state?.resetNonce || '';
-  // Старые клиенты могли не отправлять resetNonce, поэтому принимаем пустой nonce
-  // только когда серверный игрок тоже ещё не был сброшен глобально.
-  return String(incomingNonce || '') === String(player.resetNonce || '');
-}
-
 async function updatePlayer(env, userId, patch) {
   const current = await readPlayer(env, userId);
   const next = { ...current, ...patch, userId: String(userId) };
@@ -268,24 +214,17 @@ async function updatePlayer(env, userId, patch) {
 
 async function getPlayer(request, env) {
   const url = new URL(request.url);
-  const userId = String(url.searchParams.get('userId') || request.headers.get('x-user-id') || `web-${crypto.randomUUID()}`);
-  const profile = {
-    username: url.searchParams.get('username') || request.headers.get('x-tg-username') || '',
-    firstName: url.searchParams.get('firstName') || request.headers.get('x-tg-first-name') || '',
-    lastName: url.searchParams.get('lastName') || request.headers.get('x-tg-last-name') || '',
-    languageCode: url.searchParams.get('languageCode') || request.headers.get('x-tg-language-code') || ''
-  };
-
-  const player = await readFreshPlayer(env, userId, profile);
+  const userId = String(url.searchParams.get('userId') || request.headers.get('x-user-id') || 'demo-user');
+  const player = await readPlayer(env, userId);
   const updated = await updatePlayer(env, userId, {
     visits: Number(player.visits || 0) + 1,
-    username: profile.username || player.username || '',
-    firstName: profile.firstName || player.firstName || '',
-    lastName: profile.lastName || player.lastName || '',
-    languageCode: profile.languageCode || player.languageCode || ''
+    username: url.searchParams.get('username') || request.headers.get('x-tg-username') || player.username || '',
+    firstName: url.searchParams.get('firstName') || request.headers.get('x-tg-first-name') || player.firstName || '',
+    lastName: url.searchParams.get('lastName') || request.headers.get('x-tg-last-name') || player.lastName || '',
+    languageCode: url.searchParams.get('languageCode') || request.headers.get('x-tg-language-code') || player.languageCode || ''
   });
 
-  const shouldLock = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3) || (Number(updated.balance || 0) <= 0 && Number(updated.gamesPlayed || 0) > 0);
+  const shouldLock = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3) || Number(updated.balance || 0) <= 0;
   const finalPlayer = shouldLock && !updated.locked
     ? await updatePlayer(env, userId, { locked: true })
     : updated;
@@ -305,31 +244,39 @@ async function getPlayer(request, env) {
 }
 async function trackEvent(request, env) {
   const body = await request.json().catch(() => ({}));
-  const userId = String(body.userId || request.headers.get('x-user-id') || `web-${crypto.randomUUID()}`);
-  const profile = body.user ? {
-    username: body.user.username || '',
-    firstName: body.user.first_name || body.user.firstName || '',
-    lastName: body.user.last_name || body.user.lastName || '',
-    languageCode: body.user.language_code || body.user.languageCode || ''
-  } : {
-    username: request.headers.get('x-tg-username') || '',
-    firstName: request.headers.get('x-tg-first-name') || '',
-    lastName: request.headers.get('x-tg-last-name') || '',
-    languageCode: request.headers.get('x-tg-language-code') || ''
-  };
-
-  const player = await readFreshPlayer(env, userId, profile);
-  const freshState = stateBelongsToCurrentReset(body, player);
+  const userId = String(body.userId || request.headers.get('x-user-id') || 'demo-user');
+  const player = await readPlayer(env, userId);
   const patch = { lastSeenMs: Date.now() };
-
-  patch.username = profile.username || player.username || '';
-  patch.firstName = profile.firstName || player.firstName || '';
-  patch.lastName = profile.lastName || player.lastName || '';
-  patch.languageCode = profile.languageCode || player.languageCode || '';
+  if (body.user) {
+    patch.username = body.user.username || player.username || '';
+    patch.firstName = body.user.first_name || body.user.firstName || player.firstName || '';
+    patch.lastName = body.user.last_name || body.user.lastName || player.lastName || '';
+    patch.languageCode = body.user.language_code || body.user.languageCode || player.languageCode || '';
+  }
 
   if (body.event === 'visit') {
     patch.visits = Number(player.visits || 0) + 1;
-    // Визит никогда не должен переносить старые локальные balance/games/locked.
+  }
+
+  const clientResetNonce = String(body.clientResetNonce || body.state?.resetNonce || '');
+  const serverResetNonce = String(player.resetNonce || '');
+  const staleClientState = Boolean(serverResetNonce && clientResetNonce && clientResetNonce !== serverResetNonce);
+  const missingClientNonceAfterReset = Boolean(serverResetNonce && !clientResetNonce && body.state);
+
+  // Защита от главного бага: после reset_all старый телефон может прислать старый localStorage
+  // с locked/gamesPlayed/balance. Такое состояние нельзя принимать обратно в базу.
+  // Разрешаем только lastSeen/visit/профиль, чтобы игрок появился в статистике, но не блокировался.
+  if (staleClientState || missingClientNonceAfterReset) {
+    await updatePlayer(env, userId, patch);
+    return json({
+      ok: true,
+      ignoredStaleState: true,
+      resetRequired: true,
+      resetNonce: serverResetNonce,
+      locked: false,
+      gamesPlayed: Number(player.gamesPlayed || 0),
+      balance: Number(player.balance ?? 10)
+    });
   }
 
   if (body.event === 'game_finished') {
@@ -338,9 +285,9 @@ async function trackEvent(request, env) {
     patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
   }
 
-  if (body.event === 'locked' && freshState) patch.locked = true;
+  if (body.event === 'locked') patch.locked = true;
 
-  if ((body.event === 'partner_click' || body.event === 'direct_partner_click') && freshState) {
+  if (body.event === 'partner_click' || body.event === 'direct_partner_click') {
     patch.locked = true;
     patch.clickedPartner = true;
     patch.clickedAtMs = Date.now();
@@ -352,8 +299,7 @@ async function trackEvent(request, env) {
     }
   }
 
-  // Не принимаем state от телефона на обычном visit и не принимаем state от старого resetNonce.
-  if (body.state && freshState && body.event !== 'visit') {
+  if (body.state && body.event !== 'visit') {
     patch.gamesPlayed ??= Math.max(Number(player.gamesPlayed || 0), Number(body.state.gamesPlayed || 0));
     patch.balance ??= Number(body.state.balance ?? player.balance ?? 10);
   }
@@ -362,13 +308,13 @@ async function trackEvent(request, env) {
 
   if (body.event === 'game_finished') {
     const shouldLockByGames = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3);
-    const shouldLockByBalance = Number(updated.balance || 0) <= 0 && Number(updated.gamesPlayed || 0) > 0 && Number(updated.gamesPlayed || 0) <= 5;
+    const shouldLockByBalance = Number(updated.balance || 0) <= 0 && Number(updated.gamesPlayed || 0) <= 5;
     if (shouldLockByGames || shouldLockByBalance) {
       await updatePlayer(env, userId, { locked: true, lastResult: updated.lastResult || '' });
     }
   }
 
-  return json({ ok: true, resetNonce: updated.resetNonce || '', userId });
+  return json({ ok: true });
 }
 
 function isAdmin(env, id) {
@@ -445,8 +391,18 @@ async function telegramWebhook(request, env) {
       return json({ ok: true });
     }
 
-    const player = await resetPlayerForCurrentNonce(env, userId);
-    await updatePlayer(env, userId, { visits: Number(player.visits || 0) });
+    const player = await readPlayer(env, userId);
+    await updatePlayer(env, userId, {
+      locked: false,
+      clickedPartner: false,
+      directPartnerClick: false,
+      gamesPlayed: 0,
+      balance: 10,
+      resetNonce: crypto.randomUUID(),
+      triggerAfter: randomTriggerAfter(),
+      lastResult: '',
+      visits: Number(player.visits || 0)
+    });
 
     await sendMessage(env, chatId, `Игрок ${userId} сброшен. При следующем входе он начнёт с демо-счёта 10$ и сможет сыграть 3–5 раз.`);
     return json({ ok: true });
