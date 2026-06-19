@@ -51,12 +51,9 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
 const tgUser = tg?.initDataUnsafe?.user || null;
-let storedUserId = localStorage.getItem('mines--user-id');
-if (!tgUser?.id && (!storedUserId || storedUserId === '-user' || storedUserId === 'demo-user')) {
-  storedUserId = `guest-${crypto.randomUUID()}`;
-  localStorage.setItem('mines--user-id', storedUserId);
-}
-const userId = String(tgUser?.id || storedUserId || `guest-${crypto.randomUUID()}`);
+const storedUserId = localStorage.getItem('mines--user-id');
+const generatedUserId = storedUserId || `guest-${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+const userId = String(tgUser?.id || generatedUserId);
 localStorage.setItem('mines--user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
@@ -130,6 +127,7 @@ async function api(path, options = {}) {
         'x-tg-first-name': tgUser?.first_name || '',
         'x-tg-last-name': tgUser?.last_name || '',
         'x-tg-language-code': tgUser?.language_code || '',
+        'x-client-reset-nonce': appState?.resetNonce || '',
         ...(options.headers || {})
       }
     });
@@ -155,9 +153,6 @@ async function loadRemoteState() {
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
-  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
-  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
-  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
   if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
     localStorage.removeItem(storageKey);
@@ -174,6 +169,10 @@ async function loadRemoteState() {
     saveState();
   }
 
+  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Number(remote.gamesPlayed);
+  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
+
   if (remote.locked || remote.clickedPartner) {
     locked = true;
     appState.locked = true;
@@ -187,18 +186,7 @@ async function loadRemoteState() {
 }
 
 async function track(event, extra = {}) {
-  const payload = {
-    userId,
-    user: tgUser,
-    event,
-    resetNonce: appState.resetNonce || '',
-    ...extra
-  };
-
-  if (event === 'game_finished' || event === 'partner_click' || event === 'direct_partner_click' || event === 'locked') {
-    payload.state = appState;
-  }
-
+  const payload = { userId, user: tgUser, event, state: appState, ...extra };
   return api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
@@ -511,14 +499,15 @@ cashoutBtn.addEventListener('click', collectWin);
 partnerButton.addEventListener('click', openPartner);
 directPartnerBtn?.addEventListener('click', openDirectPartner);
 
-renderBoard();
-sync();
-updateMaxWinPanel();
-
-(async function initPlayer() {
+async function boot() {
+  renderBoard();
+  sync();
+  updateMaxWinPanel();
   await loadRemoteState();
-  await track('visit');
-})();
+  await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+}
+
+boot();
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
