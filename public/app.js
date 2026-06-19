@@ -186,44 +186,58 @@ async function loadRemoteState() {
     lastName: tgUser?.last_name || '',
     languageCode: tgUser?.language_code || ''
   });
+
   const remote = await api(`/api/player?${params.toString()}`);
   if (!remote) {
     applyLockIfNeeded();
-    return;
+    return false;
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
-  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
-  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
-  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
-  const remoteIsClean = !remote.locked
-    && !remote.clickedPartner
-    && Number(remote.gamesPlayed || 0) === 0
-    && Number(remote.balance ?? START_BALANCE) >= START_BALANCE;
+  // Самое важное: сначала проверяем resetNonce, и только потом переносим
+  // gamesPlayed/balance с телефона на сервер. Иначе после полного сброса
+  // старый localStorage снова записывает в D1 прошлые 3 игры и FINISHED.
+  const localResetNonce = appState.resetNonce || '';
+  const remoteResetNonce = remote.resetNonce || '';
+  const resetNonceChanged = Boolean(remoteResetNonce) && remoteResetNonce !== localResetNonce;
 
-  const resetNonceChanged = Boolean(remote.resetNonce) && remote.resetNonce !== appState.resetNonce;
-
-  // После сброса статистики админкой D1 удаляет игроков и выдаёт новый resetNonce.
-  // Если на телефоне остался локальный FINISHED, а сервер вернул чистого игрока,
-  // локальную блокировку нужно снять. Но если сервер уже подтвердил locked/clickedPartner,
-  // окно остаётся до сброса в админке.
-  if (resetNonceChanged || (locked && remoteIsClean && Number(remote.visits || 0) <= 1)) {
+  if (resetNonceChanged) {
     resetLocalGameState(remote);
-    appState.resetNonce = remote.resetNonce || appState.resetNonce || '';
+    appState.resetNonce = remoteResetNonce;
+    if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+    balance = START_BALANCE;
+    locked = false;
     saveState();
+    sync();
+    return true;
+  }
+
+  if (Number.isFinite(Number(remote.triggerAfter))) {
+    appState.triggerAfter = Number(remote.triggerAfter);
+  }
+
+  if (Number.isFinite(Number(remote.gamesPlayed))) {
+    appState.gamesPlayed = Math.max(0, Number(remote.gamesPlayed));
+  }
+
+  if (Number.isFinite(Number(remote.balance)) && !active) {
+    balance = Number(remote.balance);
   }
 
   if (remote.locked || remote.clickedPartner) {
     locked = true;
     appState.locked = true;
     appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
-    saveState();
+  } else if (!appState.locked && !appState.clickedPartner) {
+    locked = false;
   }
 
+  appState.resetNonce = remoteResetNonce || appState.resetNonce || '';
   saveState();
   applyLockIfNeeded();
   sync();
+  return true;
 }
 
 async function track(event, extra = {}) {
@@ -558,11 +572,19 @@ cashoutBtn.addEventListener('click', collectWin);
 partnerButton.addEventListener('click', openPartner);
 directPartnerBtn?.addEventListener('click', openDirectPartner);
 
-renderBoard();
-sync();
-updateMaxWinPanel();
-loadRemoteState();
-track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+async function bootstrap() {
+  renderBoard();
+  sync();
+  updateMaxWinPanel();
+
+  // Ждём ответ сервера перед отправкой visit. Это защищает от ситуации,
+  // когда после админского сброса старые локальные gamesPlayed/locked
+  // с телефона повторно записываются в D1.
+  await loadRemoteState();
+  await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+}
+
+bootstrap();
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
