@@ -51,7 +51,12 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
 const tgUser = tg?.initDataUnsafe?.user || null;
-const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || '-user');
+let storedUserId = localStorage.getItem('mines--user-id');
+if (!tgUser?.id && (!storedUserId || storedUserId === '-user' || storedUserId === 'demo-user')) {
+  storedUserId = `guest-${crypto.randomUUID()}`;
+  localStorage.setItem('mines--user-id', storedUserId);
+}
+const userId = String(tgUser?.id || storedUserId || `guest-${crypto.randomUUID()}`);
 localStorage.setItem('mines--user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
@@ -182,8 +187,19 @@ async function loadRemoteState() {
 }
 
 async function track(event, extra = {}) {
-  const payload = { userId, user: tgUser, event, state: appState, ...extra };
-  api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
+  const payload = {
+    userId,
+    user: tgUser,
+    event,
+    resetNonce: appState.resetNonce || '',
+    ...extra
+  };
+
+  if (event === 'game_finished' || event === 'partner_click' || event === 'direct_partner_click' || event === 'locked') {
+    payload.state = appState;
+  }
+
+  return api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -498,9 +514,11 @@ directPartnerBtn?.addEventListener('click', openDirectPartner);
 renderBoard();
 sync();
 updateMaxWinPanel();
-loadRemoteState().then(() => {
-  track('visit', { balance, gamesPlayed: appState.gamesPlayed });
-});
+
+(async function initPlayer() {
+  await loadRemoteState();
+  await track('visit');
+})();
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
