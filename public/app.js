@@ -82,8 +82,7 @@ const tgUser = parseTelegramUserFromInitData();
 const hasTelegramUser = Boolean(tgUser?.id);
 const userId = String(tgUser?.id || getAnonymousUserId());
 
-// Старый общий ключ мог переносить состояние одного Telegram-аккаунта на другой.
-// Сохраняем текущий ID только для диагностики, но никогда не используем его как fallback для TG-пользователя.
+// Telegram ID всегда главный. localStorage используется только если Telegram не передал пользователя.
 localStorage.setItem('mines--last-user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
@@ -101,9 +100,10 @@ let opened = new Set();
 let currentWin = 0;
 let partnerUrl = DEFAULT_PARTNER_URL;
 let locked = Boolean(appState.locked);
-let serverReady = true;
-let remoteLoaded = false;
-let pendingTracks = JSON.parse(localStorage.getItem('mines--pending-tracks') || '[]');
+let pendingTracks = (() => {
+  try { return JSON.parse(localStorage.getItem('mines--pending-tracks') || '[]'); }
+  catch { return []; }
+})();
 
 function readState() {
   try {
@@ -153,7 +153,7 @@ async function api(path, options = {}) {
   try {
     const response = await fetch(path, {
       ...options,
-      keepalive: options.keepalive ?? true,
+      cache: 'no-store',
       headers: {
         'content-type': 'application/json',
         'cache-control': 'no-cache',
@@ -180,30 +180,25 @@ async function registerOnServer() {
     username: tgUser?.username || '',
     firstName: tgUser?.first_name || '',
     lastName: tgUser?.last_name || '',
-    languageCode: tgUser?.language_code || ''
+    languageCode: tgUser?.language_code || '',
+    t: String(Date.now())
   });
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const remote = await api(`/api/player?${params.toString()}`);
     if (remote?.ok) return remote;
-    await new Promise((resolve) => setTimeout(resolve, 300 + attempt * 400));
+    await new Promise((resolve) => setTimeout(resolve, 250 + attempt * 350));
   }
-
   return null;
 }
 
 async function loadRemoteState() {
   const remote = await registerOnServer();
   if (!remote) {
-    // Не блокируем игру из-за временной ошибки сети: иначе Telegram WebView показывает
-    // бесконечное “connecting to server”. События сохраняются локально и будут
-    // досланы при следующем успешном запросе.
     applyLockIfNeeded();
-    sync();
     return;
   }
 
-  remoteLoaded = true;
   partnerUrl = remote.partnerUrl || partnerUrl;
   if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
   if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
@@ -258,7 +253,7 @@ async function track(event, extra = {}) {
 }
 
 async function flushPendingTracks() {
-  if (pendingTracks.length === 0) return;
+  if (!pendingTracks.length) return;
   const queue = pendingTracks.slice();
   pendingTracks = [];
   for (const payload of queue) {
@@ -482,18 +477,18 @@ function collectWin() {
   finishRound('win');
 }
 
-async function finishRound(result) {
+function finishRound(result) {
   appState.gamesPlayed += 1;
   saveState();
-  await track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
+  track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
 
   const lostBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
 
   if (lostBeforeFiveGames) {
-    await forcePartner('The money has run out', offerText());
+    forcePartner('The money has run out', offerText());
   } else if (playedEnough) {
-    await forcePartner('Continuation of the game', offerText());
+    forcePartner('Continuation of the game', offerText());
   }
 }
 
@@ -501,13 +496,13 @@ function offerText() {
   return `You won ${money(balance)}$. To receive funds, go to the website.`;
 }
 
-async function forcePartner(title, text) {
+function forcePartner(title, text) {
   locked = true;
   appState.locked = true;
   appState.popupShown = true;
   active = false;
   saveState();
-  await track('locked', { reason: title, balance, gamesPlayed: appState.gamesPlayed });
+  track('locked', { reason: title });
   lockBoard();
   setControlsForGame(false);
   sync();
@@ -531,21 +526,21 @@ function applyLockIfNeeded() {
   showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
 }
 
-async function openPartner() {
+function openPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  await track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
 }
 
-async function openDirectPartner() {
+function openDirectPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  await track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
@@ -580,19 +575,17 @@ directPartnerBtn?.addEventListener('click', openDirectPartner);
 async function initApp() {
   renderBoard();
   sync();
-  playBtn.disabled = true;
-  cashoutBtn.disabled = true;
   updateMaxWinPanel();
+  // Регистрируем визит сразу при открытии Mini App. Если первый запрос не пройдет, он попадет в очередь.
+  track('visit', { balance, gamesPlayed: appState.gamesPlayed, phase: 'startup' });
   await loadRemoteState();
-  await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+  await track('visit', { balance, gamesPlayed: appState.gamesPlayed, phase: 'after_remote' });
 }
 
 initApp();
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return;
-  flushPendingTracks();
-  if (locked) {
+  if (!document.hidden && locked) {
     showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
   }
 });
