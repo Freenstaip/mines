@@ -1,4 +1,4 @@
-const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
 
 export default {
   async fetch(request, env, ctx) {
@@ -32,7 +32,7 @@ function corsHeaders() {
   return {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type,cache-control,x-user-id,x-tg-user-present,x-tg-username,x-tg-first-name,x-tg-last-name,x-tg-language-code'
+    'access-control-allow-headers': 'content-type,x-user-id'
   };
 }
 
@@ -93,43 +93,6 @@ function adminIds(env) {
 
 function randomTriggerAfter() {
   return Math.floor(Math.random() * 3) + 3;
-}
-
-function normalizeUserId(value) {
-  const id = String(value || '').trim();
-  return id || 'demo-user';
-}
-
-function parseTelegramUserFromInitData(initData) {
-  try {
-    if (!initData) return null;
-    const params = new URLSearchParams(String(initData));
-    const rawUser = params.get('user');
-    if (!rawUser) return null;
-    const parsed = JSON.parse(rawUser);
-    return parsed?.id ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeTelegramProfile(user = {}) {
-  return {
-    username: user.username || '',
-    firstName: user.first_name || user.firstName || '',
-    lastName: user.last_name || user.lastName || '',
-    languageCode: user.language_code || user.languageCode || ''
-  };
-}
-
-function requestTelegramProfile(request) {
-  const url = new URL(request.url);
-  return {
-    username: url.searchParams.get('username') || request.headers.get('x-tg-username') || '',
-    firstName: url.searchParams.get('firstName') || request.headers.get('x-tg-first-name') || '',
-    lastName: url.searchParams.get('lastName') || request.headers.get('x-tg-last-name') || '',
-    languageCode: url.searchParams.get('languageCode') || request.headers.get('x-tg-language-code') || ''
-  };
 }
 
 async function getGlobalResetNonce(env) {
@@ -251,15 +214,14 @@ async function updatePlayer(env, userId, patch) {
 
 async function getPlayer(request, env) {
   const url = new URL(request.url);
-  const userId = normalizeUserId(url.searchParams.get('userId') || request.headers.get('x-user-id'));
+  const userId = String(url.searchParams.get('userId') || request.headers.get('x-user-id') || 'demo-user');
   const player = await readPlayer(env, userId);
-  const profile = requestTelegramProfile(request);
   const updated = await updatePlayer(env, userId, {
     visits: Number(player.visits || 0) + 1,
-    username: profile.username || player.username || '',
-    firstName: profile.firstName || player.firstName || '',
-    lastName: profile.lastName || player.lastName || '',
-    languageCode: profile.languageCode || player.languageCode || ''
+    username: url.searchParams.get('username') || request.headers.get('x-tg-username') || player.username || '',
+    firstName: url.searchParams.get('firstName') || request.headers.get('x-tg-first-name') || player.firstName || '',
+    lastName: url.searchParams.get('lastName') || request.headers.get('x-tg-last-name') || player.lastName || '',
+    languageCode: url.searchParams.get('languageCode') || request.headers.get('x-tg-language-code') || player.languageCode || ''
   });
 
   const shouldLock = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3) || Number(updated.balance || 0) <= 0;
@@ -277,35 +239,29 @@ async function getPlayer(request, env) {
     gamesPlayed: Number(finalPlayer.gamesPlayed || 0),
     balance: Number(finalPlayer.balance ?? 10),
     partnerUrl: partnerUrl(env),
-    gameUrl: gameUrl(env),
-    isTelegramUser: /^\d+$/.test(String(userId))
+    gameUrl: gameUrl(env)
   });
 }
 async function trackEvent(request, env) {
   const body = await request.json().catch(() => ({}));
-  const initDataUser = parseTelegramUserFromInitData(body.initData || '');
-  const effectiveUser = body.user?.id ? body.user : initDataUser;
-  const userId = normalizeUserId(effectiveUser?.id || body.userId || request.headers.get('x-user-id'));
+  const userId = String(body.userId || request.headers.get('x-user-id') || 'demo-user');
   const player = await readPlayer(env, userId);
   const patch = { lastSeenMs: Date.now() };
-  const bodyProfile = normalizeTelegramProfile(effectiveUser || {});
-  if (effectiveUser) {
-    patch.username = bodyProfile.username || player.username || '';
-    patch.firstName = bodyProfile.firstName || player.firstName || '';
-    patch.lastName = bodyProfile.lastName || player.lastName || '';
-    patch.languageCode = bodyProfile.languageCode || player.languageCode || '';
+  if (body.user) {
+    patch.username = body.user.username || player.username || '';
+    patch.firstName = body.user.first_name || body.user.firstName || player.firstName || '';
+    patch.lastName = body.user.last_name || body.user.lastName || player.lastName || '';
+    patch.languageCode = body.user.language_code || body.user.languageCode || player.languageCode || '';
   }
 
   if (body.event === 'visit') {
     patch.visits = Number(player.visits || 0) + 1;
   }
 
-  const stateMatchesReset = !body.state?.resetNonce || body.state.resetNonce === player.resetNonce;
-
   if (body.event === 'game_finished') {
-    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || (stateMatchesReset ? body.state?.gamesPlayed : 0) || 0));
+    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
     patch.lastResult = body.result || player.lastResult || '';
-    patch.balance = Number(body.balance ?? (stateMatchesReset ? body.state?.balance : undefined) ?? player.balance ?? 10);
+    patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
   }
 
   if (body.event === 'locked') patch.locked = true;
@@ -314,15 +270,15 @@ async function trackEvent(request, env) {
     patch.locked = true;
     patch.clickedPartner = true;
     patch.clickedAtMs = Date.now();
-    patch.balance = Number(body.balance ?? (stateMatchesReset ? body.state?.balance : undefined) ?? player.balance ?? 10);
-    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || (stateMatchesReset ? body.state?.gamesPlayed : 0) || 0));
+    patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
+    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
     if (body.event === 'direct_partner_click') {
       patch.directPartnerClick = true;
       patch.directPartnerClickedAtMs = Date.now();
     }
   }
 
-  if (body.state && stateMatchesReset) {
+  if (body.state) {
     patch.gamesPlayed ??= Math.max(Number(player.gamesPlayed || 0), Number(body.state.gamesPlayed || 0));
     patch.balance ??= Number(body.state.balance ?? player.balance ?? 10);
   }
