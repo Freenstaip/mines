@@ -101,8 +101,9 @@ let opened = new Set();
 let currentWin = 0;
 let partnerUrl = DEFAULT_PARTNER_URL;
 let locked = Boolean(appState.locked);
-let serverReady = false;
-let pendingTracks = [];
+let serverReady = true;
+let remoteLoaded = false;
+let pendingTracks = JSON.parse(localStorage.getItem('mines--pending-tracks') || '[]');
 
 function readState() {
   try {
@@ -155,6 +156,7 @@ async function api(path, options = {}) {
       keepalive: options.keepalive ?? true,
       headers: {
         'content-type': 'application/json',
+        'cache-control': 'no-cache',
         'x-user-id': userId,
         'x-tg-user-present': hasTelegramUser ? '1' : '0',
         'x-tg-username': tgUser?.username || '',
@@ -193,15 +195,15 @@ async function registerOnServer() {
 async function loadRemoteState() {
   const remote = await registerOnServer();
   if (!remote) {
-    showMessage('Connection error. Please reopen the game.');
-    playBtn.disabled = true;
-    cashoutBtn.disabled = true;
-    directPartnerBtn?.setAttribute('disabled', 'disabled');
+    // Не блокируем игру из-за временной ошибки сети: иначе Telegram WebView показывает
+    // бесконечное “connecting to server”. События сохраняются локально и будут
+    // досланы при следующем успешном запросе.
     applyLockIfNeeded();
+    sync();
     return;
   }
 
-  serverReady = true;
+  remoteLoaded = true;
   partnerUrl = remote.partnerUrl || partnerUrl;
   if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
   if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
@@ -247,24 +249,23 @@ async function track(event, extra = {}) {
     ...extra
   };
 
-  if (!serverReady && event !== 'visit') {
-    pendingTracks.push(payload);
-    return null;
-  }
-
   const result = await api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
-  if (!result?.ok && event !== 'visit') pendingTracks.push(payload);
+  if (!result?.ok) {
+    pendingTracks.push(payload);
+    localStorage.setItem('mines--pending-tracks', JSON.stringify(pendingTracks.slice(-50)));
+  }
   return result;
 }
 
 async function flushPendingTracks() {
-  if (!serverReady || pendingTracks.length === 0) return;
+  if (pendingTracks.length === 0) return;
   const queue = pendingTracks.slice();
   pendingTracks = [];
   for (const payload of queue) {
     const result = await api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
     if (!result?.ok) pendingTracks.push(payload);
   }
+  localStorage.setItem('mines--pending-tracks', JSON.stringify(pendingTracks.slice(-50)));
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -374,10 +375,6 @@ function setControlsForGame(isActive) {
 }
 
 function startGame(firstClickIndex = null) {
-  if (!serverReady) {
-    showMessage('Please wait, connecting to server...');
-    return false;
-  }
   if (locked) {
     showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
     return false;
