@@ -495,8 +495,8 @@ async function sendPushToNotClicked(env) {
 
   let sent = 0;
   for (const player of results || []) {
-    const ok = await sendMessage(env, player.user_id, 'To continue the game, you need to go to the website.', {
-      inline_keyboard: [[{ text: 'Continue game', url: partnerUrl(env) }]]
+    const ok = await sendMessage(env, player.user_id, '‼️You forgot your winnings, hurry to collect them before they disappear.‼️', {
+      inline_keyboard: [[{ text: 'CLAIM YOUR WINNINGS ✅', url: partnerUrl(env) }]]
     });
     if (ok) sent += 1;
   }
