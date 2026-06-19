@@ -50,9 +50,42 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
-const tgUser = tg?.initDataUnsafe?.user || null;
-const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || '-user');
-localStorage.setItem('mines--user-id', userId);
+
+function getTelegramUser() {
+  const unsafeUser = tg?.initDataUnsafe?.user;
+  if (unsafeUser?.id) return unsafeUser;
+
+  // Fallback for some Android/iOS Telegram WebViews where initDataUnsafe may be empty
+  // during the first synchronous JS pass. The raw initData usually still contains user.
+  try {
+    const raw = tg?.initData || '';
+    const params = new URLSearchParams(raw);
+    const userRaw = params.get('user');
+    if (userRaw) return JSON.parse(userRaw);
+  } catch {}
+
+  return null;
+}
+
+function getOrCreateUserId(user) {
+  if (user?.id) {
+    const id = String(user.id);
+    localStorage.setItem('mines--user-id', id);
+    return id;
+  }
+
+  // Local fallback is used only when the game is opened outside Telegram.
+  // It keeps the browser session stable, but Telegram push/doshim works only for real numeric IDs.
+  let id = localStorage.getItem('mines--user-id');
+  if (!id || id === '-user' || id === 'demo-user') {
+    id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    localStorage.setItem('mines--user-id', id);
+  }
+  return String(id);
+}
+
+const tgUser = getTelegramUser();
+const userId = getOrCreateUserId(tgUser);
 
 const storageKey = `mines--state:${userId}`;
 const legacyBalanceKey = `mines--balance:${userId}`;
@@ -147,6 +180,7 @@ async function api(path, options = {}) {
   try {
     const response = await fetch(path, {
       ...options,
+      keepalive: options.keepalive ?? (String(options.method || '').toUpperCase() === 'POST'),
       headers: {
         'content-type': 'application/json',
         'x-user-id': userId,
@@ -207,7 +241,7 @@ async function loadRemoteState() {
 
 async function track(event, extra = {}) {
   const payload = { userId, user: tgUser, event, state: appState, ...extra };
-  api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
+  return api('/api/track', { method: 'POST', body: JSON.stringify(payload), keepalive: true });
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -427,7 +461,7 @@ function collectWin() {
 function finishRound(result) {
   appState.gamesPlayed += 1;
   saveState();
-  track('game_', { result, balance, gamesPlayed: appState.gamesPlayed });
+  track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
 
   const lostBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
@@ -473,21 +507,21 @@ function applyLockIfNeeded() {
   showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
 }
 
-function openPartner() {
+async function openPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  await track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
 }
 
-function openDirectPartner() {
+async function openDirectPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  await track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
