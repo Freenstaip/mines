@@ -49,8 +49,6 @@ window.addEventListener('orientationchange', () => setTimeout(updateViewportAndB
 tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 
 const START_BALANCE = 10;
-// Увеличивайте эту версию, когда нужно принудительно сбросить старое состояние WebView на телефонах.
-const CLIENT_RESET_VERSION = '2026-06-19-force-client-reset-v5';
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
 
 function parseTelegramUserFromInitData() {
@@ -70,35 +68,6 @@ function parseTelegramUserFromInitData() {
   }
 }
 
-
-function clearAllLocalGameState() {
-  try {
-    const keysToRemove = [];
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (
-        key === 'mines--anonymous-user-id' ||
-        key === 'mines--last-user-id' ||
-        key === 'mines--client-reset-version' ||
-        key?.startsWith('mines--state:') ||
-        key?.startsWith('mines--balance:')
-      ) {
-        keysToRemove.push(key);
-      }
-    }
-    keysToRemove.forEach((key) => localStorage.removeItem(key));
-    localStorage.setItem('mines--client-reset-version', CLIENT_RESET_VERSION);
-  } catch {}
-}
-
-function ensureClientResetVersion() {
-  try {
-    if (localStorage.getItem('mines--client-reset-version') !== CLIENT_RESET_VERSION) {
-      clearAllLocalGameState();
-    }
-  } catch {}
-}
-
 function getAnonymousUserId() {
   const key = 'mines--anonymous-user-id';
   let id = localStorage.getItem(key);
@@ -109,9 +78,8 @@ function getAnonymousUserId() {
   return id;
 }
 
-ensureClientResetVersion();
-
 const tgUser = parseTelegramUserFromInitData();
+const hasTelegramUser = Boolean(tgUser?.id);
 const userId = String(tgUser?.id || getAnonymousUserId());
 
 // Старый общий ключ мог переносить состояние одного Telegram-аккаунта на другой.
@@ -132,8 +100,9 @@ let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
 let partnerUrl = DEFAULT_PARTNER_URL;
-// Не доверяем старому локальному locked до ответа сервера: иначе старый Telegram WebView может показать партнёрское окно до статистики.
-let locked = false;
+let locked = Boolean(appState.locked);
+let serverReady = false;
+let pendingTracks = [];
 
 function readState() {
   try {
@@ -183,9 +152,11 @@ async function api(path, options = {}) {
   try {
     const response = await fetch(path, {
       ...options,
+      keepalive: options.keepalive ?? true,
       headers: {
         'content-type': 'application/json',
         'x-user-id': userId,
+        'x-tg-user-present': hasTelegramUser ? '1' : '0',
         'x-tg-username': tgUser?.username || '',
         'x-tg-first-name': tgUser?.first_name || '',
         'x-tg-last-name': tgUser?.last_name || '',
@@ -200,45 +171,46 @@ async function api(path, options = {}) {
   }
 }
 
-async function loadRemoteState() {
+async function registerOnServer() {
   const params = new URLSearchParams({
     userId,
+    hasTelegramUser: hasTelegramUser ? '1' : '0',
     username: tgUser?.username || '',
     firstName: tgUser?.first_name || '',
     lastName: tgUser?.last_name || '',
     languageCode: tgUser?.language_code || ''
   });
-  const remote = await api(`/api/player?${params.toString()}`);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const remote = await api(`/api/player?${params.toString()}`);
+    if (remote?.ok) return remote;
+    await new Promise((resolve) => setTimeout(resolve, 300 + attempt * 400));
+  }
+
+  return null;
+}
+
+async function loadRemoteState() {
+  const remote = await registerOnServer();
   if (!remote) {
-    // Если API не ответил, нельзя показывать старую локальную блокировку.
-    // Иначе игрок может увидеть партнёрское окно, а в админке его не будет.
-    locked = false;
-    appState = normalizeState({ balance: START_BALANCE, resetNonce: appState.resetNonce || '' });
-    balance = START_BALANCE;
-    saveState();
-    partnerModal.classList.add('hidden');
-    partnerModal.setAttribute('aria-hidden', 'true');
-    renderBoard();
-    setControlsForGame(false);
-    sync();
+    showMessage('Connection error. Please reopen the game.');
+    playBtn.disabled = true;
+    cashoutBtn.disabled = true;
+    directPartnerBtn?.setAttribute('disabled', 'disabled');
+    applyLockIfNeeded();
     return;
   }
 
+  serverReady = true;
   partnerUrl = remote.partnerUrl || partnerUrl;
+  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
+  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
-  const resetChanged = remote.resetNonce && remote.resetNonce !== appState.resetNonce;
-  if (resetChanged) {
+  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
     localStorage.removeItem(storageKey);
     localStorage.removeItem(legacyBalanceKey);
-    appState = normalizeState({
-      resetNonce: remote.resetNonce,
-      balance: START_BALANCE,
-      gamesPlayed: 0,
-      locked: false,
-      clickedPartner: false,
-      popupShown: false,
-      triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5)
-    });
+    appState = normalizeState({ resetNonce: remote.resetNonce, balance: START_BALANCE, triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5) });
     appState.resetNonce = remote.resetNonce;
     balance = START_BALANCE;
     locked = false;
@@ -248,25 +220,51 @@ async function loadRemoteState() {
     renderBoard();
     setControlsForGame(false);
     saveState();
-  } else {
-    if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
-    if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Number(remote.gamesPlayed);
-    if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
-    appState.resetNonce = remote.resetNonce || appState.resetNonce || '';
   }
 
-  locked = Boolean(remote.locked || remote.clickedPartner);
-  appState.locked = locked;
-  appState.clickedPartner = Boolean(remote.clickedPartner);
-  appState.popupShown = locked;
+  if (remote.locked || remote.clickedPartner) {
+    locked = true;
+    appState.locked = true;
+    appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
+    saveState();
+  }
 
   saveState();
   applyLockIfNeeded();
+  await flushPendingTracks();
   sync();
 }
+
 async function track(event, extra = {}) {
-  const payload = { userId, user: tgUser, event, state: appState, ...extra };
-  return api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
+  const payload = {
+    userId,
+    user: tgUser,
+    hasTelegramUser,
+    initData: tg?.initData || '',
+    event,
+    state: appState,
+    clientTime: new Date().toISOString(),
+    ...extra
+  };
+
+  if (!serverReady && event !== 'visit') {
+    pendingTracks.push(payload);
+    return null;
+  }
+
+  const result = await api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
+  if (!result?.ok && event !== 'visit') pendingTracks.push(payload);
+  return result;
+}
+
+async function flushPendingTracks() {
+  if (!serverReady || pendingTracks.length === 0) return;
+  const queue = pendingTracks.slice();
+  pendingTracks = [];
+  for (const payload of queue) {
+    const result = await api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
+    if (!result?.ok) pendingTracks.push(payload);
+  }
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -376,6 +374,10 @@ function setControlsForGame(isActive) {
 }
 
 function startGame(firstClickIndex = null) {
+  if (!serverReady) {
+    showMessage('Please wait, connecting to server...');
+    return false;
+  }
   if (locked) {
     showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
     return false;
@@ -483,18 +485,18 @@ function collectWin() {
   finishRound('win');
 }
 
-function finishRound(result) {
+async function finishRound(result) {
   appState.gamesPlayed += 1;
   saveState();
-  track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
+  await track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
 
   const lostBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
 
   if (lostBeforeFiveGames) {
-    forcePartner('The money has run out', offerText());
+    await forcePartner('The money has run out', offerText());
   } else if (playedEnough) {
-    forcePartner('Continuation of the game', offerText());
+    await forcePartner('Continuation of the game', offerText());
   }
 }
 
@@ -502,13 +504,13 @@ function offerText() {
   return `You won ${money(balance)}$. To receive funds, go to the website.`;
 }
 
-function forcePartner(title, text) {
+async function forcePartner(title, text) {
   locked = true;
   appState.locked = true;
   appState.popupShown = true;
   active = false;
   saveState();
-  track('locked', { reason: title });
+  await track('locked', { reason: title, balance, gamesPlayed: appState.gamesPlayed });
   lockBoard();
   setControlsForGame(false);
   sync();
@@ -532,21 +534,21 @@ function applyLockIfNeeded() {
   showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
 }
 
-function openPartner() {
+async function openPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  await track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
 }
 
-function openDirectPartner() {
+async function openDirectPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  await track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
@@ -581,6 +583,8 @@ directPartnerBtn?.addEventListener('click', openDirectPartner);
 async function initApp() {
   renderBoard();
   sync();
+  playBtn.disabled = true;
+  cashoutBtn.disabled = true;
   updateMaxWinPanel();
   await loadRemoteState();
   await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
@@ -589,7 +593,9 @@ async function initApp() {
 initApp();
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && locked) {
+  if (document.hidden) return;
+  flushPendingTracks();
+  if (locked) {
     showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
   }
 });
