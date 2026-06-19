@@ -32,7 +32,7 @@ function corsHeaders() {
   return {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-user-id'
+    'access-control-allow-headers': 'content-type,x-user-id,x-tg-username,x-tg-first-name,x-tg-last-name,x-tg-language-code'
   };
 }
 
@@ -93,6 +93,21 @@ function adminIds(env) {
 
 function randomTriggerAfter() {
   return Math.floor(Math.random() * 3) + 3;
+}
+
+function normalizeUserId(value) {
+  const id = String(value || '').trim();
+  return id || 'demo-user';
+}
+
+function requestTelegramProfile(request) {
+  const url = new URL(request.url);
+  return {
+    username: url.searchParams.get('username') || request.headers.get('x-tg-username') || '',
+    firstName: url.searchParams.get('firstName') || request.headers.get('x-tg-first-name') || '',
+    lastName: url.searchParams.get('lastName') || request.headers.get('x-tg-last-name') || '',
+    languageCode: url.searchParams.get('languageCode') || request.headers.get('x-tg-language-code') || ''
+  };
 }
 
 async function getGlobalResetNonce(env) {
@@ -214,14 +229,15 @@ async function updatePlayer(env, userId, patch) {
 
 async function getPlayer(request, env) {
   const url = new URL(request.url);
-  const userId = String(url.searchParams.get('userId') || request.headers.get('x-user-id') || 'demo-user');
+  const userId = normalizeUserId(url.searchParams.get('userId') || request.headers.get('x-user-id'));
   const player = await readPlayer(env, userId);
+  const profile = requestTelegramProfile(request);
   const updated = await updatePlayer(env, userId, {
     visits: Number(player.visits || 0) + 1,
-    username: url.searchParams.get('username') || request.headers.get('x-tg-username') || player.username || '',
-    firstName: url.searchParams.get('firstName') || request.headers.get('x-tg-first-name') || player.firstName || '',
-    lastName: url.searchParams.get('lastName') || request.headers.get('x-tg-last-name') || player.lastName || '',
-    languageCode: url.searchParams.get('languageCode') || request.headers.get('x-tg-language-code') || player.languageCode || ''
+    username: profile.username || player.username || '',
+    firstName: profile.firstName || player.firstName || '',
+    lastName: profile.lastName || player.lastName || '',
+    languageCode: profile.languageCode || player.languageCode || ''
   });
 
   const shouldLock = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3) || Number(updated.balance || 0) <= 0;
@@ -244,7 +260,7 @@ async function getPlayer(request, env) {
 }
 async function trackEvent(request, env) {
   const body = await request.json().catch(() => ({}));
-  const userId = String(body.userId || request.headers.get('x-user-id') || 'demo-user');
+  const userId = normalizeUserId(body.user?.id || body.userId || request.headers.get('x-user-id'));
   const player = await readPlayer(env, userId);
   const patch = { lastSeenMs: Date.now() };
   if (body.user) {
@@ -258,31 +274,12 @@ async function trackEvent(request, env) {
     patch.visits = Number(player.visits || 0) + 1;
   }
 
-  const clientResetNonce = String(body.clientResetNonce || body.state?.resetNonce || '');
-  const serverResetNonce = String(player.resetNonce || '');
-  const staleClientState = Boolean(serverResetNonce && clientResetNonce && clientResetNonce !== serverResetNonce);
-  const missingClientNonceAfterReset = Boolean(serverResetNonce && !clientResetNonce && body.state);
-
-  // Защита от главного бага: после reset_all старый телефон может прислать старый localStorage
-  // с locked/gamesPlayed/balance. Такое состояние нельзя принимать обратно в базу.
-  // Разрешаем только lastSeen/visit/профиль, чтобы игрок появился в статистике, но не блокировался.
-  if (staleClientState || missingClientNonceAfterReset) {
-    await updatePlayer(env, userId, patch);
-    return json({
-      ok: true,
-      ignoredStaleState: true,
-      resetRequired: true,
-      resetNonce: serverResetNonce,
-      locked: false,
-      gamesPlayed: Number(player.gamesPlayed || 0),
-      balance: Number(player.balance ?? 10)
-    });
-  }
+  const stateMatchesReset = !body.state?.resetNonce || body.state.resetNonce === player.resetNonce;
 
   if (body.event === 'game_finished') {
-    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
+    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || (stateMatchesReset ? body.state?.gamesPlayed : 0) || 0));
     patch.lastResult = body.result || player.lastResult || '';
-    patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
+    patch.balance = Number(body.balance ?? (stateMatchesReset ? body.state?.balance : undefined) ?? player.balance ?? 10);
   }
 
   if (body.event === 'locked') patch.locked = true;
@@ -291,15 +288,15 @@ async function trackEvent(request, env) {
     patch.locked = true;
     patch.clickedPartner = true;
     patch.clickedAtMs = Date.now();
-    patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
-    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
+    patch.balance = Number(body.balance ?? (stateMatchesReset ? body.state?.balance : undefined) ?? player.balance ?? 10);
+    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || (stateMatchesReset ? body.state?.gamesPlayed : 0) || 0));
     if (body.event === 'direct_partner_click') {
       patch.directPartnerClick = true;
       patch.directPartnerClickedAtMs = Date.now();
     }
   }
 
-  if (body.state && body.event !== 'visit') {
+  if (body.state && stateMatchesReset) {
     patch.gamesPlayed ??= Math.max(Number(player.gamesPlayed || 0), Number(body.state.gamesPlayed || 0));
     patch.balance ??= Number(body.state.balance ?? player.balance ?? 10);
   }
