@@ -68,8 +68,7 @@ let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
 let partnerUrl = DEFAULT_PARTNER_URL;
-let locked = false;
-let booting = true;
+let locked = Boolean(appState.locked);
 
 function readState() {
   try {
@@ -100,35 +99,6 @@ function saveState() {
   appState.locked = Boolean(locked);
   appState.updatedAt = new Date().toISOString();
   localStorage.setItem(storageKey, JSON.stringify(appState));
-}
-
-function resetLocalGameState(remote = {}) {
-  localStorage.removeItem(storageKey);
-  localStorage.removeItem(legacyBalanceKey);
-
-  appState = normalizeState({
-    resetNonce: remote.resetNonce || appState.resetNonce || '',
-    balance: START_BALANCE,
-    triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5),
-    gamesPlayed: 0,
-    locked: false,
-    clickedPartner: false,
-    popupShown: false
-  });
-
-  balance = START_BALANCE;
-  locked = false;
-  active = false;
-  currentWin = 0;
-  opened = new Set();
-  mines = new Set();
-
-  partnerModal?.classList.add('hidden');
-  partnerModal?.setAttribute('aria-hidden', 'true');
-
-  renderBoard();
-  setControlsForGame(false);
-  saveState();
 }
 
 function randomInt(min, max) {
@@ -173,68 +143,47 @@ async function loadRemoteState() {
     lastName: tgUser?.last_name || '',
     languageCode: tgUser?.language_code || ''
   });
-
   const remote = await api(`/api/player?${params.toString()}`);
-
-  if (!remote || !remote.ok) {
-    // Если сервер временно недоступен, не отправляем старое локальное состояние
-    // обратно в D1 и не восстанавливаем FINISHED из localStorage. Иначе после
-    // полного сброса старый телефон может снова записать 3 игры и блокировку.
-    booting = false;
-    locked = false;
-    appState.locked = false;
-    appState.clickedPartner = false;
-    saveState();
-    partnerModal?.classList.add('hidden');
-    partnerModal?.setAttribute('aria-hidden', 'true');
-    sync();
-    return false;
+  if (!remote) {
+    applyLockIfNeeded();
+    return;
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
+  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
+  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
-  const oldResetNonce = appState.resetNonce || '';
-  const newResetNonce = remote.resetNonce || '';
-  const wasResetByAdmin = newResetNonce && newResetNonce !== oldResetNonce;
-
-  if (wasResetByAdmin) {
-    resetLocalGameState(remote);
-  }
-
-  appState.resetNonce = newResetNonce;
-  if (Number.isFinite(Number(remote.triggerAfter))) {
-    appState.triggerAfter = Number(remote.triggerAfter);
-  }
-
-  // Сервер — главный источник правды. Старый localStorage не должен повторно
-  // записывать старые игры/FINISHED после сброса админкой.
-  appState.gamesPlayed = Number(remote.gamesPlayed || 0);
-  balance = Number.isFinite(Number(remote.balance)) ? Number(remote.balance) : START_BALANCE;
-
-  locked = Boolean(remote.locked || remote.clickedPartner);
-  appState.locked = locked;
-  appState.clickedPartner = Boolean(remote.clickedPartner);
-  appState.popupShown = locked || Boolean(appState.popupShown && !wasResetByAdmin);
-
-  booting = false;
-  saveState();
-
-  if (locked) {
-    applyLockIfNeeded();
-  } else {
-    partnerModal?.classList.add('hidden');
-    partnerModal?.setAttribute('aria-hidden', 'true');
+  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
+    localStorage.removeItem(storageKey);
+    localStorage.removeItem(legacyBalanceKey);
+    appState = normalizeState({ resetNonce: remote.resetNonce, balance: START_BALANCE, triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5) });
+    appState.resetNonce = remote.resetNonce;
+    balance = START_BALANCE;
+    locked = false;
+    active = false;
+    partnerModal.classList.add('hidden');
+    partnerModal.setAttribute('aria-hidden', 'true');
     renderBoard();
     setControlsForGame(false);
-    sync();
+    saveState();
   }
 
-  return true;
+  if (remote.locked || remote.clickedPartner) {
+    locked = true;
+    appState.locked = true;
+    appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
+    saveState();
+  }
+
+  saveState();
+  applyLockIfNeeded();
+  sync();
 }
 
 async function track(event, extra = {}) {
   const payload = { userId, user: tgUser, event, state: appState, ...extra };
-  return api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
+  api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -344,10 +293,6 @@ function setControlsForGame(isActive) {
 }
 
 function startGame(firstClickIndex = null) {
-  if (booting) {
-    showMessage('Loading game, please wait a second');
-    return false;
-  }
   if (locked) {
     showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
     return false;
@@ -376,10 +321,6 @@ function startGame(firstClickIndex = null) {
 }
 
 function handleCellClick(index, cell) {
-  if (booting) {
-    showMessage('Loading game, please wait a second');
-    return;
-  }
   if (locked) {
     showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
     return;
@@ -462,7 +403,7 @@ function collectWin() {
 function finishRound(result) {
   appState.gamesPlayed += 1;
   saveState();
-  track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
+  track('game_', { result, balance, gamesPlayed: appState.gamesPlayed });
 
   const lostBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
@@ -508,21 +449,21 @@ function applyLockIfNeeded() {
   showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
 }
 
-async function openPartner() {
+function openPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  await track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
 }
 
-async function openDirectPartner() {
+function openDirectPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  await track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
@@ -554,17 +495,11 @@ cashoutBtn.addEventListener('click', collectWin);
 partnerButton.addEventListener('click', openPartner);
 directPartnerBtn?.addEventListener('click', openDirectPartner);
 
-async function initGame() {
-  renderBoard();
-  sync();
-  updateMaxWinPanel();
-  const loaded = await loadRemoteState();
-  if (loaded) {
-    await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
-  }
-}
-
-initGame();
+renderBoard();
+sync();
+updateMaxWinPanel();
+loadRemoteState();
+track('visit', { balance, gamesPlayed: appState.gamesPlayed });
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
