@@ -403,7 +403,7 @@ function collectWin() {
 function finishRound(result) {
   appState.gamesPlayed += 1;
   saveState();
-  track('game_', { result, balance, gamesPlayed: appState.gamesPlayed });
+  track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
 
   const lostBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
@@ -498,8 +498,9 @@ directPartnerBtn?.addEventListener('click', openDirectPartner);
 renderBoard();
 sync();
 updateMaxWinPanel();
-loadRemoteState();
-track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+loadRemoteState().then(() => {
+  track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+});
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
