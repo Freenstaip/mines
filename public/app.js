@@ -57,11 +57,6 @@ localStorage.setItem('mines--user-id', userId);
 const storageKey = `mines--state:${userId}`;
 const legacyBalanceKey = `mines--balance:${userId}`;
 
-if (new URLSearchParams(window.location.search).has('reset')) {
-  localStorage.removeItem(storageKey);
-  localStorage.removeItem(legacyBalanceKey);
-}
-
 let appState = readState();
 let balance = appState.balance;
 let bet = 0.20;
@@ -104,6 +99,35 @@ function saveState() {
   appState.locked = Boolean(locked);
   appState.updatedAt = new Date().toISOString();
   localStorage.setItem(storageKey, JSON.stringify(appState));
+}
+
+function resetLocalGameState(remote = {}) {
+  localStorage.removeItem(storageKey);
+  localStorage.removeItem(legacyBalanceKey);
+
+  appState = normalizeState({
+    resetNonce: remote.resetNonce || appState.resetNonce || '',
+    balance: START_BALANCE,
+    triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5),
+    gamesPlayed: 0,
+    locked: false,
+    clickedPartner: false,
+    popupShown: false
+  });
+
+  balance = START_BALANCE;
+  locked = false;
+  active = false;
+  currentWin = 0;
+  opened = new Set();
+  mines = new Set();
+
+  partnerModal?.classList.add('hidden');
+  partnerModal?.setAttribute('aria-hidden', 'true');
+
+  renderBoard();
+  setControlsForGame(false);
+  saveState();
 }
 
 function randomInt(min, max) {
@@ -155,62 +179,32 @@ async function loadRemoteState() {
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
+  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
+  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
-  const remoteResetNonce = String(remote.resetNonce || '');
-  const serverSaysFreshPlayer =
-    !remote.locked &&
-    !remote.clickedPartner &&
-    Number(remote.gamesPlayed || 0) === 0 &&
-    Number(remote.balance ?? START_BALANCE) === START_BALANCE;
+  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
+    resetLocalGameState(remote);
+  }
 
-  const resetNonceChanged = remoteResetNonce !== String(appState.resetNonce || '');
-  const localWasBlockedButServerWasReset =
-    Boolean(appState.locked || locked || appState.clickedPartner || appState.popupShown) && serverSaysFreshPlayer;
+  // Важный fallback после полного сброса статистики в админке.
+  // Если D1 уже чистая, а на телефоне остался localStorage с locked/clicked/popup,
+  // разблокируем игру даже если resetNonce на этом конкретном устройстве совпал или был закеширован.
+  const serverSaysFreshPlayer = !remote.locked
+    && !remote.clickedPartner
+    && Number(remote.gamesPlayed || 0) === 0
+    && Number(remote.balance ?? START_BALANCE) === START_BALANCE;
 
-  if (resetNonceChanged || localWasBlockedButServerWasReset) {
-    localStorage.removeItem(storageKey);
-    localStorage.removeItem(legacyBalanceKey);
+  const localStillBlocked = Boolean(locked || appState.locked || appState.clickedPartner || appState.popupShown);
 
-    appState = normalizeState({
-      resetNonce: remoteResetNonce,
-      balance: Number(remote.balance ?? START_BALANCE),
-      gamesPlayed: Number(remote.gamesPlayed || 0),
-      triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5),
-      locked: false,
-      clickedPartner: false,
-      popupShown: false
-    });
-
-    balance = Number(remote.balance ?? START_BALANCE);
-    locked = false;
-    active = false;
-    opened = new Set();
-    mines = new Set();
-    currentWin = 0;
-
-    partnerModal.classList.add('hidden');
-    partnerModal.setAttribute('aria-hidden', 'true');
-    renderBoard();
-    setControlsForGame(false);
-    saveState();
-  } else {
-    if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
-    if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Number(remote.gamesPlayed);
-    if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
+  if (serverSaysFreshPlayer && localStillBlocked) {
+    resetLocalGameState(remote);
   }
 
   if (remote.locked || remote.clickedPartner) {
     locked = true;
     appState.locked = true;
     appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
-    saveState();
-  } else {
-    locked = false;
-    appState.locked = false;
-    appState.clickedPartner = false;
-    appState.popupShown = false;
-    partnerModal.classList.add('hidden');
-    partnerModal.setAttribute('aria-hidden', 'true');
     saveState();
   }
 
@@ -441,7 +435,7 @@ function collectWin() {
 function finishRound(result) {
   appState.gamesPlayed += 1;
   saveState();
-  track('game_finished', { result, balance, gamesPlayed: appState.gamesPlayed });
+  track('game_', { result, balance, gamesPlayed: appState.gamesPlayed });
 
   const lostBeforeFiveGames = balance <= 0 && appState.gamesPlayed <= 5;
   const playedEnough = appState.gamesPlayed >= appState.triggerAfter;
