@@ -178,6 +178,37 @@ async function readPlayer(env, userId) {
   };
 }
 
+
+async function resetPlayerToFresh(env, userId, resetNonce = null, keepVisits = true) {
+  const current = await readPlayer(env, userId);
+  const nonce = resetNonce || await getGlobalResetNonce(env) || crypto.randomUUID();
+  return updatePlayer(env, userId, {
+    visits: keepVisits ? Number(current.visits || 0) : 0,
+    gamesPlayed: 0,
+    balance: 10,
+    locked: false,
+    clickedPartner: false,
+    directPartnerClick: false,
+    clickedAtMs: null,
+    directPartnerClickedAtMs: null,
+    resetNonce: nonce,
+    triggerAfter: randomTriggerAfter(),
+    lastResult: '',
+    username: current.username || '',
+    firstName: current.firstName || '',
+    lastName: current.lastName || '',
+    languageCode: current.languageCode || ''
+  });
+}
+
+async function readFreshPlayer(env, userId) {
+  const player = await readPlayer(env, userId);
+  const globalResetNonce = await getGlobalResetNonce(env);
+  if (globalResetNonce && player.resetNonce !== globalResetNonce) {
+    return resetPlayerToFresh(env, userId, globalResetNonce, true);
+  }
+  return player;
+}
 async function updatePlayer(env, userId, patch) {
   const current = await readPlayer(env, userId);
   const next = { ...current, ...patch, userId: String(userId) };
@@ -230,7 +261,7 @@ async function updatePlayer(env, userId, patch) {
 async function getPlayer(request, env) {
   const url = new URL(request.url);
   const userId = normalizeUserId(url.searchParams.get('userId') || request.headers.get('x-user-id'));
-  const player = await readPlayer(env, userId);
+  const player = await readFreshPlayer(env, userId);
   const profile = requestTelegramProfile(request);
   const updated = await updatePlayer(env, userId, {
     visits: Number(player.visits || 0) + 1,
@@ -261,7 +292,7 @@ async function getPlayer(request, env) {
 async function trackEvent(request, env) {
   const body = await request.json().catch(() => ({}));
   const userId = normalizeUserId(body.user?.id || body.userId || request.headers.get('x-user-id'));
-  const player = await readPlayer(env, userId);
+  const player = await readFreshPlayer(env, userId);
   const patch = { lastSeenMs: Date.now() };
   if (body.user) {
     patch.username = body.user.username || player.username || '';
@@ -500,8 +531,10 @@ async function resetAllStats(env) {
   const db = getDb(env);
   const count = await db.prepare('SELECT COUNT(*) AS count FROM players').first('count');
   const nonce = crypto.randomUUID();
-  await db.prepare('DELETE FROM players').run();
+  // Сначала меняем глобальную версию сброса. Даже если на клиенте/в D1 осталась старая запись,
+  // следующий /api/player принудительно пересоздаст её как новую игру с балансом $10.
   await setGlobalResetNonce(env, nonce);
+  await db.prepare('DELETE FROM players').run();
   return Number(count || 0);
 }
 
