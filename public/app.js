@@ -50,45 +50,26 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
-
-function getTelegramUser() {
-  const unsafeUser = tg?.initDataUnsafe?.user;
-  if (unsafeUser?.id) return unsafeUser;
-
-  // Fallback for some Android/iOS Telegram WebViews where initDataUnsafe may be empty
-  // during the first synchronous JS pass. The raw initData usually still contains user.
-  try {
-    const raw = tg?.initData || '';
-    const params = new URLSearchParams(raw);
-    const userRaw = params.get('user');
-    if (userRaw) return JSON.parse(userRaw);
-  } catch {}
-
-  return null;
-}
-
-function getOrCreateUserId(user) {
-  if (user?.id) {
-    const id = String(user.id);
-    localStorage.setItem('mines--user-id', id);
-    return id;
-  }
-
-  // Local fallback is used only when the game is opened outside Telegram.
-  // It keeps the browser session stable, but Telegram push/doshim works only for real numeric IDs.
-  let id = localStorage.getItem('mines--user-id');
-  if (!id || id === '-user' || id === 'demo-user') {
-    id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    localStorage.setItem('mines--user-id', id);
-  }
-  return String(id);
-}
-
-const tgUser = getTelegramUser();
-const userId = getOrCreateUserId(tgUser);
+const tgUser = tg?.initDataUnsafe?.user || null;
+const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || '-user');
+localStorage.setItem('mines--user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
 const legacyBalanceKey = `mines--balance:${userId}`;
+
+function clearAllLocalMinesState() {
+  try {
+    Object.keys(localStorage).forEach((key) => {
+      if (key.startsWith('mines--state:') || key.startsWith('mines--balance:')) {
+        localStorage.removeItem(key);
+      }
+    });
+  } catch {}
+}
+
+if (new URLSearchParams(window.location.search).has('unlock')) {
+  clearAllLocalMinesState();
+}
 
 let appState = readState();
 let balance = appState.balance;
@@ -180,7 +161,6 @@ async function api(path, options = {}) {
   try {
     const response = await fetch(path, {
       ...options,
-      keepalive: options.keepalive ?? (String(options.method || '').toUpperCase() === 'POST'),
       headers: {
         'content-type': 'application/json',
         'x-user-id': userId,
@@ -217,15 +197,22 @@ async function loadRemoteState() {
   if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
   if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
-  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
-    resetLocalGameState(remote);
-  }
+  const remoteIsClean = !remote.locked
+    && !remote.clickedPartner
+    && Number(remote.gamesPlayed || 0) === 0
+    && Number(remote.balance ?? START_BALANCE) >= START_BALANCE;
 
-  // Локальную блокировку НЕЛЬЗЯ автоматически снимать только потому, что сервер
-  // вернул нового/чистого игрока. Иначе после появления окна FINISHED пользователь
-  // может просто перезайти в игру и снова играть.
-  // Снятие блокировки теперь происходит только при смене resetNonce после сброса
-  // через админку или после сброса конкретного игрока.
+  const resetNonceChanged = Boolean(remote.resetNonce) && remote.resetNonce !== appState.resetNonce;
+
+  // После сброса статистики админкой D1 удаляет игроков и выдаёт новый resetNonce.
+  // Если на телефоне остался локальный FINISHED, а сервер вернул чистого игрока,
+  // локальную блокировку нужно снять. Но если сервер уже подтвердил locked/clickedPartner,
+  // окно остаётся до сброса в админке.
+  if (resetNonceChanged || (locked && remoteIsClean && Number(remote.visits || 0) <= 1)) {
+    resetLocalGameState(remote);
+    appState.resetNonce = remote.resetNonce || appState.resetNonce || '';
+    saveState();
+  }
 
   if (remote.locked || remote.clickedPartner) {
     locked = true;
@@ -241,7 +228,21 @@ async function loadRemoteState() {
 
 async function track(event, extra = {}) {
   const payload = { userId, user: tgUser, event, state: appState, ...extra };
-  return api('/api/track', { method: 'POST', body: JSON.stringify(payload), keepalive: true });
+  const body = JSON.stringify(payload);
+
+  try {
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: 'application/json' });
+      const sent = navigator.sendBeacon('/api/track', blob);
+      if (sent) return { ok: true, beacon: true };
+    }
+  } catch {}
+
+  return api('/api/track', {
+    method: 'POST',
+    body,
+    keepalive: true
+  });
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -477,17 +478,21 @@ function offerText() {
   return `You won ${money(balance)}$. To receive funds, go to the website.`;
 }
 
-function forcePartner(title, text) {
+async function forcePartner(title, text) {
   locked = true;
   appState.locked = true;
   appState.popupShown = true;
   active = false;
   saveState();
-  track('locked', { reason: title });
   lockBoard();
   setControlsForGame(false);
   sync();
-  setTimeout(() => showPartnerModal(title, text), 500);
+
+  // Важно дождаться записи locked в D1, иначе /players и «Дожим» могут не видеть игрока,
+  // а FINISHED будет храниться только на телефоне.
+  await track('locked', { reason: title, balance, gamesPlayed: appState.gamesPlayed });
+
+  setTimeout(() => showPartnerModal(title, text), 250);
 }
 
 function showPartnerModal(title, text) {
