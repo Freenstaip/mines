@@ -50,25 +50,8 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
-
-function clearAllMinesLocalState() {
-  try {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('mines--')) keys.push(key);
-    }
-    keys.forEach((key) => localStorage.removeItem(key));
-  } catch {}
-}
-
-const urlParams = new URLSearchParams(window.location.search || '');
-if (urlParams.has('reset') || urlParams.has('unlock') || urlParams.has('clear')) {
-  clearAllMinesLocalState();
-}
-
 const tgUser = tg?.initDataUnsafe?.user || null;
-const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || `guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || '-user');
 localStorage.setItem('mines--user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
@@ -191,13 +174,7 @@ async function loadRemoteState() {
   });
   const remote = await api(`/api/player?${params.toString()}`);
   if (!remote) {
-    // Если сервер не ответил, не оставляем игрока навсегда заблокированным локальным флагом.
-    // Это особенно важно после сброса статистики в админке: в D1 игроков уже нет,
-    // а на старом телефоне Telegram WebView может держать старый localStorage.
-    if (locked || appState.locked || appState.clickedPartner || appState.popupShown) {
-      resetLocalGameState({});
-      sync();
-    }
+    applyLockIfNeeded();
     return;
   }
 
@@ -210,19 +187,11 @@ async function loadRemoteState() {
     resetLocalGameState(remote);
   }
 
-  // Важный fallback после полного сброса статистики в админке.
-  // Если D1 уже чистая, а на телефоне остался localStorage с locked/clicked/popup,
-  // разблокируем игру даже если resetNonce на этом конкретном устройстве совпал или был закеширован.
-  const serverSaysFreshPlayer = !remote.locked
-    && !remote.clickedPartner
-    && Number(remote.gamesPlayed || 0) === 0
-    && Number(remote.balance ?? START_BALANCE) === START_BALANCE;
-
-  const localStillBlocked = Boolean(locked || appState.locked || appState.clickedPartner || appState.popupShown);
-
-  if (serverSaysFreshPlayer && localStillBlocked) {
-    resetLocalGameState(remote);
-  }
+  // Локальную блокировку НЕЛЬЗЯ автоматически снимать только потому, что сервер
+  // вернул нового/чистого игрока. Иначе после появления окна FINISHED пользователь
+  // может просто перезайти в игру и снова играть.
+  // Снятие блокировки теперь происходит только при смене resetNonce после сброса
+  // через админку или после сброса конкретного игрока.
 
   if (remote.locked || remote.clickedPartner) {
     locked = true;
