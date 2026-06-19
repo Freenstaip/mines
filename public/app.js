@@ -50,22 +50,40 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
-const tgUser = tg?.initDataUnsafe?.user || null;
-function getStableUserId() {
-  if (tgUser?.id) return String(tgUser.id);
 
-  // Если Telegram по какой-то причине не отдал initDataUnsafe.user,
-  // не используем общий '-user': иначе разные телефоны смешиваются в одного игрока
-  // или вообще не видны как нормальные пользователи в статистике.
-  const saved = localStorage.getItem('mines--user-id');
-  if (saved && saved !== '-user' && saved !== 'demo-user') return saved;
+function parseTelegramUserFromInitData() {
+  const unsafeUser = tg?.initDataUnsafe?.user;
+  if (unsafeUser?.id) return unsafeUser;
 
-  const generated = `anon-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  localStorage.setItem('mines--user-id', generated);
-  return generated;
+  try {
+    const initData = tg?.initData || '';
+    if (!initData) return null;
+    const params = new URLSearchParams(initData);
+    const rawUser = params.get('user');
+    if (!rawUser) return null;
+    const parsed = JSON.parse(rawUser);
+    return parsed?.id ? parsed : null;
+  } catch {
+    return null;
+  }
 }
-const userId = getStableUserId();
-localStorage.setItem('mines--user-id', userId);
+
+function getAnonymousUserId() {
+  const key = 'mines--anonymous-user-id';
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = `anon-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
+const tgUser = parseTelegramUserFromInitData();
+const userId = String(tgUser?.id || getAnonymousUserId());
+
+// Старый общий ключ мог переносить состояние одного Telegram-аккаунта на другой.
+// Сохраняем текущий ID только для диагностики, но никогда не используем его как fallback для TG-пользователя.
+localStorage.setItem('mines--last-user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
 const legacyBalanceKey = `mines--balance:${userId}`;
@@ -157,34 +175,21 @@ async function loadRemoteState() {
     languageCode: tgUser?.language_code || ''
   });
   const remote = await api(`/api/player?${params.toString()}`);
-
-  // Если сервер недоступен, сохраняем старое поведение: локальная блокировка не теряется.
   if (!remote) {
     applyLockIfNeeded();
-    return false;
+    return;
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
+  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
+  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
-  const remoteResetNonce = remote.resetNonce || '';
-  const localResetNonce = appState.resetNonce || '';
-  const resetChanged = remoteResetNonce && remoteResetNonce !== localResetNonce;
-
-  // Главный фикс: если админ нажал "сброс всей статистики", сервер меняет resetNonce.
-  // Любое старое состояние телефона (locked/clickedPartner/gamesPlayed/balance) после этого
-  // полностью выбрасывается и больше не может показать партнёрское окно.
-  if (resetChanged) {
+  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
     localStorage.removeItem(storageKey);
     localStorage.removeItem(legacyBalanceKey);
-    appState = normalizeState({
-      resetNonce: remoteResetNonce,
-      balance: START_BALANCE,
-      gamesPlayed: 0,
-      locked: false,
-      clickedPartner: false,
-      popupShown: false,
-      triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5)
-    });
+    appState = normalizeState({ resetNonce: remote.resetNonce, balance: START_BALANCE, triggerAfter: Number(remote.triggerAfter) || randomInt(3, 5) });
+    appState.resetNonce = remote.resetNonce;
     balance = START_BALANCE;
     locked = false;
     active = false;
@@ -193,34 +198,22 @@ async function loadRemoteState() {
     renderBoard();
     setControlsForGame(false);
     saveState();
-  } else {
-    appState.resetNonce = remoteResetNonce || localResetNonce;
-    if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
-    if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
-    if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
+  }
 
-    // После обычного перезапуска окно должно остаться, если игрок уже дошёл до него.
-    // Но после resetChanged выше локальный locked специально игнорируется.
-    if (remote.locked || remote.clickedPartner || appState.locked || appState.clickedPartner) {
-      locked = true;
-      appState.locked = true;
-      appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
-    } else {
-      locked = false;
-      appState.locked = false;
-      appState.clickedPartner = false;
-      appState.popupShown = false;
-    }
+  if (remote.locked || remote.clickedPartner) {
+    locked = true;
+    appState.locked = true;
+    appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
     saveState();
   }
 
+  saveState();
   applyLockIfNeeded();
   sync();
-  return true;
 }
 
 async function track(event, extra = {}) {
-  const payload = { userId, user: tgUser, event, state: appState, clientResetNonce: appState.resetNonce || '', ...extra };
+  const payload = { userId, user: tgUser, event, state: appState, ...extra };
   return api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
@@ -537,12 +530,8 @@ async function initApp() {
   renderBoard();
   sync();
   updateMaxWinPanel();
-
-  // Важно: сначала получаем состояние с сервера, и только потом отправляем visit.
-  // Иначе телефон со старым localStorage успевает отправить старый locked/gamesPlayed
-  // до того, как узнает про reset_all.
-  const loaded = await loadRemoteState();
-  if (loaded) await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+  await loadRemoteState();
+  await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
 }
 
 initApp();
