@@ -50,8 +50,25 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
+
+function clearAllMinesLocalState() {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('mines--')) keys.push(key);
+    }
+    keys.forEach((key) => localStorage.removeItem(key));
+  } catch {}
+}
+
+const urlParams = new URLSearchParams(window.location.search || '');
+if (urlParams.has('reset') || urlParams.has('unlock') || urlParams.has('clear')) {
+  clearAllMinesLocalState();
+}
+
 const tgUser = tg?.initDataUnsafe?.user || null;
-const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || '-user');
+const userId = String(tgUser?.id || localStorage.getItem('mines--user-id') || `guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 localStorage.setItem('mines--user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
@@ -174,7 +191,13 @@ async function loadRemoteState() {
   });
   const remote = await api(`/api/player?${params.toString()}`);
   if (!remote) {
-    applyLockIfNeeded();
+    // Если сервер не ответил, не оставляем игрока навсегда заблокированным локальным флагом.
+    // Это особенно важно после сброса статистики в админке: в D1 игроков уже нет,
+    // а на старом телефоне Telegram WebView может держать старый localStorage.
+    if (locked || appState.locked || appState.clickedPartner || appState.popupShown) {
+      resetLocalGameState({});
+      sync();
+    }
     return;
   }
 
