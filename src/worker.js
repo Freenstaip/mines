@@ -105,6 +105,57 @@ async function setGlobalResetNonce(env, nonce) {
   return nonce;
 }
 
+async function getCurrentResetNonce(env) {
+  let nonce = await getGlobalResetNonce(env);
+  if (!nonce) nonce = await setGlobalResetNonce(env, crypto.randomUUID());
+  return nonce;
+}
+
+async function resetPlayerForCurrentNonce(env, userId, profile = {}) {
+  const now = Date.now();
+  const resetNonce = await getCurrentResetNonce(env);
+  const triggerAfter = randomTriggerAfter();
+  await getDb(env).prepare(`
+    INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, clicked_at, reset_nonce, trigger_after, last_result, username, first_name, last_name, language_code, direct_partner_click, direct_partner_clicked_at)
+    VALUES (?, ?, ?, 0, 0, 10, 0, 0, NULL, ?, ?, '', ?, ?, ?, ?, 0, NULL)
+    ON CONFLICT(user_id) DO UPDATE SET
+      last_seen = excluded.last_seen,
+      games_played = 0,
+      balance = 10,
+      locked = 0,
+      clicked_partner = 0,
+      clicked_at = NULL,
+      reset_nonce = excluded.reset_nonce,
+      trigger_after = excluded.trigger_after,
+      last_result = '',
+      username = COALESCE(NULLIF(excluded.username, ''), username),
+      first_name = COALESCE(NULLIF(excluded.first_name, ''), first_name),
+      last_name = COALESCE(NULLIF(excluded.last_name, ''), last_name),
+      language_code = COALESCE(NULLIF(excluded.language_code, ''), language_code),
+      direct_partner_click = 0,
+      direct_partner_clicked_at = NULL
+  `).bind(
+    String(userId),
+    now,
+    now,
+    resetNonce,
+    triggerAfter,
+    profile.username || '',
+    profile.firstName || '',
+    profile.lastName || '',
+    profile.languageCode || ''
+  ).run();
+  return rowToPlayer(await getDb(env).prepare('SELECT * FROM players WHERE user_id = ?').bind(String(userId)).first());
+}
+
+async function ensurePlayerIsOnCurrentReset(env, player, userId, profile = {}) {
+  const currentResetNonce = await getCurrentResetNonce(env);
+  if (!player || player.resetNonce !== currentResetNonce) {
+    return resetPlayerForCurrentNonce(env, userId, profile);
+  }
+  return player;
+}
+
 function rowToPlayer(row) {
   if (!row) return null;
   return {
@@ -136,7 +187,7 @@ async function readPlayer(env, userId) {
 
   const now = Date.now();
   const triggerAfter = randomTriggerAfter();
-  const resetNonce = await getGlobalResetNonce(env);
+  const resetNonce = await getCurrentResetNonce(env);
   await db.prepare(`
     INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, reset_nonce, trigger_after, username, first_name, last_name, language_code, direct_partner_click)
     VALUES (?, ?, ?, 0, 0, 10, 0, 0, ?, ?, '', '', '', '', 0)
@@ -215,16 +266,25 @@ async function updatePlayer(env, userId, patch) {
 async function getPlayer(request, env) {
   const url = new URL(request.url);
   const userId = String(url.searchParams.get('userId') || request.headers.get('x-user-id') || 'demo-user');
-  const player = await readPlayer(env, userId);
+  const profile = {
+    username: url.searchParams.get('username') || request.headers.get('x-tg-username') || '',
+    firstName: url.searchParams.get('firstName') || request.headers.get('x-tg-first-name') || '',
+    lastName: url.searchParams.get('lastName') || request.headers.get('x-tg-last-name') || '',
+    languageCode: url.searchParams.get('languageCode') || request.headers.get('x-tg-language-code') || ''
+  };
+
+  let player = await readPlayer(env, userId);
+  player = await ensurePlayerIsOnCurrentReset(env, player, userId, profile);
+
   const updated = await updatePlayer(env, userId, {
     visits: Number(player.visits || 0) + 1,
-    username: url.searchParams.get('username') || request.headers.get('x-tg-username') || player.username || '',
-    firstName: url.searchParams.get('firstName') || request.headers.get('x-tg-first-name') || player.firstName || '',
-    lastName: url.searchParams.get('lastName') || request.headers.get('x-tg-last-name') || player.lastName || '',
-    languageCode: url.searchParams.get('languageCode') || request.headers.get('x-tg-language-code') || player.languageCode || ''
+    username: profile.username || player.username || '',
+    firstName: profile.firstName || player.firstName || '',
+    lastName: profile.lastName || player.lastName || '',
+    languageCode: profile.languageCode || player.languageCode || ''
   });
 
-  const shouldLock = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3) || Number(updated.balance || 0) <= 0;
+  const shouldLock = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3) || (Number(updated.balance || 0) <= 0 && Number(updated.gamesPlayed || 0) > 0);
   const finalPlayer = shouldLock && !updated.locked
     ? await updatePlayer(env, userId, { locked: true })
     : updated;
@@ -245,17 +305,25 @@ async function getPlayer(request, env) {
 async function trackEvent(request, env) {
   const body = await request.json().catch(() => ({}));
   const userId = String(body.userId || request.headers.get('x-user-id') || 'demo-user');
-  const player = await readPlayer(env, userId);
-  const now = Date.now();
-  const patch = { lastSeenMs: now };
-  const clientResetNonce = String(body.resetNonce || body.state?.resetNonce || '');
-  const resetNonceMatches = !clientResetNonce || clientResetNonce === String(player.resetNonce || '');
+  const profile = {
+    username: body.user?.username || body.user?.userName || '',
+    firstName: body.user?.first_name || body.user?.firstName || '',
+    lastName: body.user?.last_name || body.user?.lastName || '',
+    languageCode: body.user?.language_code || body.user?.languageCode || ''
+  };
+
+  let player = await readPlayer(env, userId);
+  player = await ensurePlayerIsOnCurrentReset(env, player, userId, profile);
+
+  const clientResetNonce = String(body.state?.resetNonce || request.headers.get('x-client-reset-nonce') || '');
+  const acceptsClientState = Boolean(clientResetNonce && clientResetNonce === player.resetNonce);
+  const patch = { lastSeenMs: Date.now() };
 
   if (body.user) {
-    patch.username = body.user.username || player.username || '';
-    patch.firstName = body.user.first_name || body.user.firstName || player.firstName || '';
-    patch.lastName = body.user.last_name || body.user.lastName || player.lastName || '';
-    patch.languageCode = body.user.language_code || body.user.languageCode || player.languageCode || '';
+    patch.username = profile.username || player.username || '';
+    patch.firstName = profile.firstName || player.firstName || '';
+    patch.lastName = profile.lastName || player.lastName || '';
+    patch.languageCode = profile.languageCode || player.languageCode || '';
   }
 
   if (body.event === 'visit') {
@@ -263,36 +331,38 @@ async function trackEvent(request, env) {
   }
 
   if (body.event === 'game_finished') {
-    patch.gamesPlayed = resetNonceMatches
-      ? Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0))
-      : Number(player.gamesPlayed || 0);
+    if (!acceptsClientState) return json({ ok: true, ignored: 'stale_client_state' });
+    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
     patch.lastResult = body.result || player.lastResult || '';
-    patch.balance = resetNonceMatches
-      ? Number(body.balance ?? body.state?.balance ?? player.balance ?? 10)
-      : Number(player.balance ?? 10);
+    patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
   }
 
   if (body.event === 'locked') {
-    if (resetNonceMatches) patch.locked = true;
+    if (!acceptsClientState) return json({ ok: true, ignored: 'stale_client_state' });
+    patch.locked = true;
   }
 
   if (body.event === 'partner_click' || body.event === 'direct_partner_click') {
-    if (resetNonceMatches) {
-      patch.locked = true;
-      patch.clickedPartner = true;
-      patch.clickedAtMs = now;
-      patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
-      patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
-      if (body.event === 'direct_partner_click') {
-        patch.directPartnerClick = true;
-        patch.directPartnerClickedAtMs = now;
-      }
+    if (!acceptsClientState) return json({ ok: true, ignored: 'stale_client_state' });
+    patch.locked = true;
+    patch.clickedPartner = true;
+    patch.clickedAtMs = Date.now();
+    patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
+    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
+    if (body.event === 'direct_partner_click') {
+      patch.directPartnerClick = true;
+      patch.directPartnerClickedAtMs = Date.now();
     }
+  }
+
+  if (body.state && acceptsClientState) {
+    patch.gamesPlayed ??= Math.max(Number(player.gamesPlayed || 0), Number(body.state.gamesPlayed || 0));
+    patch.balance ??= Number(body.state.balance ?? player.balance ?? 10);
   }
 
   const updated = await updatePlayer(env, userId, patch);
 
-  if (body.event === 'game_finished' && resetNonceMatches) {
+  if (body.event === 'game_finished') {
     const shouldLockByGames = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3);
     const shouldLockByBalance = Number(updated.balance || 0) <= 0 && Number(updated.gamesPlayed || 0) <= 5;
     if (shouldLockByGames || shouldLockByBalance) {
