@@ -51,9 +51,12 @@ tg?.onEvent?.('viewportChanged', updateViewportAndBoardSize);
 const START_BALANCE = 10;
 const DEFAULT_PARTNER_URL = 'https://lkfg.pro/a4e2c7';
 const tgUser = tg?.initDataUnsafe?.user || null;
-const storedUserId = localStorage.getItem('mines--user-id');
-const generatedUserId = storedUserId || `guest-${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
-const userId = String(tgUser?.id || generatedUserId);
+const tgUserId = tgUser?.id ? String(tgUser.id) : '';
+let fallbackUserId = localStorage.getItem('mines--user-id') || '';
+if (!tgUserId && (!fallbackUserId || fallbackUserId === '-user' || fallbackUserId === 'demo-user')) {
+  fallbackUserId = `web-${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+}
+const userId = tgUserId || fallbackUserId;
 localStorage.setItem('mines--user-id', userId);
 
 const storageKey = `mines--state:${userId}`;
@@ -70,7 +73,11 @@ let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
 let partnerUrl = DEFAULT_PARTNER_URL;
-let locked = Boolean(appState.locked);
+// Не блокируем игру только по старому localStorage: после сброса статистики
+// старый телефон может хранить locked=true. Блокировку применяем только
+// после ответа сервера или после новой игры в текущей сессии.
+let locked = false;
+appState.locked = false;
 
 function readState() {
   try {
@@ -127,7 +134,6 @@ async function api(path, options = {}) {
         'x-tg-first-name': tgUser?.first_name || '',
         'x-tg-last-name': tgUser?.last_name || '',
         'x-tg-language-code': tgUser?.language_code || '',
-        'x-client-reset-nonce': appState?.resetNonce || '',
         ...(options.headers || {})
       }
     });
@@ -148,12 +154,16 @@ async function loadRemoteState() {
   });
   const remote = await api(`/api/player?${params.toString()}`);
   if (!remote) {
-    applyLockIfNeeded();
+    locked = false;
+    appState.locked = false;
+    partnerModal.classList.add('hidden');
+    partnerModal.setAttribute('aria-hidden', 'true');
+    saveState();
+    sync();
     return;
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
-
   if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
     localStorage.removeItem(storageKey);
     localStorage.removeItem(legacyBalanceKey);
@@ -170,6 +180,7 @@ async function loadRemoteState() {
   }
 
   if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
+  // Сервер является источником правды после сброса. Не берём максимум со старого телефона.
   if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Number(remote.gamesPlayed);
   if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
 
@@ -186,7 +197,7 @@ async function loadRemoteState() {
 }
 
 async function track(event, extra = {}) {
-  const payload = { userId, user: tgUser, event, state: appState, ...extra };
+  const payload = { userId, user: tgUser, event, state: appState, resetNonce: appState.resetNonce || '', ...extra };
   return api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
@@ -499,15 +510,12 @@ cashoutBtn.addEventListener('click', collectWin);
 partnerButton.addEventListener('click', openPartner);
 directPartnerBtn?.addEventListener('click', openDirectPartner);
 
-async function boot() {
-  renderBoard();
-  sync();
-  updateMaxWinPanel();
-  await loadRemoteState();
-  await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
-}
-
-boot();
+renderBoard();
+sync();
+updateMaxWinPanel();
+loadRemoteState().then(() => {
+  track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+});
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && locked) {
