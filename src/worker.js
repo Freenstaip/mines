@@ -32,7 +32,7 @@ function corsHeaders() {
   return {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-user-id,x-tg-username,x-tg-first-name,x-tg-last-name,x-tg-language-code'
+    'access-control-allow-headers': 'content-type,cache-control,x-user-id,x-tg-user-present,x-tg-username,x-tg-first-name,x-tg-last-name,x-tg-language-code'
   };
 }
 
@@ -100,6 +100,28 @@ function normalizeUserId(value) {
   return id || 'demo-user';
 }
 
+function parseTelegramUserFromInitData(initData) {
+  try {
+    if (!initData) return null;
+    const params = new URLSearchParams(String(initData));
+    const rawUser = params.get('user');
+    if (!rawUser) return null;
+    const parsed = JSON.parse(rawUser);
+    return parsed?.id ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeTelegramProfile(user = {}) {
+  return {
+    username: user.username || '',
+    firstName: user.first_name || user.firstName || '',
+    lastName: user.last_name || user.lastName || '',
+    languageCode: user.language_code || user.languageCode || ''
+  };
+}
+
 function requestTelegramProfile(request) {
   const url = new URL(request.url);
   return {
@@ -146,33 +168,12 @@ function rowToPlayer(row) {
 
 async function readPlayer(env, userId) {
   const db = getDb(env);
-  const globalResetNonce = await getGlobalResetNonce(env);
   const row = await db.prepare('SELECT * FROM players WHERE user_id = ?').bind(String(userId)).first();
-
-  if (row) {
-    // Если админ нажал “сброс всей статистики”, старые локальные данные клиента
-    // больше не имеют права держать игрока в locked/partner popup состоянии.
-    if (globalResetNonce && row.reset_nonce !== globalResetNonce) {
-      const now = Date.now();
-      const triggerAfter = randomTriggerAfter();
-      await db.prepare(`
-        UPDATE players
-        SET last_seen = ?, visits = 0, games_played = 0, balance = 10,
-            locked = 0, clicked_partner = 0, clicked_at = NULL,
-            reset_nonce = ?, trigger_after = ?, last_result = '',
-            direct_partner_click = 0, direct_partner_clicked_at = NULL
-        WHERE user_id = ?
-      `).bind(now, globalResetNonce, triggerAfter, String(userId)).run();
-      const fresh = await db.prepare('SELECT * FROM players WHERE user_id = ?').bind(String(userId)).first();
-      return rowToPlayer(fresh);
-    }
-
-    return rowToPlayer(row);
-  }
+  if (row) return rowToPlayer(row);
 
   const now = Date.now();
   const triggerAfter = randomTriggerAfter();
-  const resetNonce = globalResetNonce;
+  const resetNonce = await getGlobalResetNonce(env);
   await db.prepare(`
     INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, reset_nonce, trigger_after, username, first_name, last_name, language_code, direct_partner_click)
     VALUES (?, ?, ?, 0, 0, 10, 0, 0, ?, ?, '', '', '', '', 0)
@@ -276,27 +277,30 @@ async function getPlayer(request, env) {
     gamesPlayed: Number(finalPlayer.gamesPlayed || 0),
     balance: Number(finalPlayer.balance ?? 10),
     partnerUrl: partnerUrl(env),
-    gameUrl: gameUrl(env)
+    gameUrl: gameUrl(env),
+    isTelegramUser: /^\d+$/.test(String(userId))
   });
 }
 async function trackEvent(request, env) {
   const body = await request.json().catch(() => ({}));
-  const userId = normalizeUserId(body.user?.id || body.userId || request.headers.get('x-user-id'));
+  const initDataUser = parseTelegramUserFromInitData(body.initData || '');
+  const effectiveUser = body.user?.id ? body.user : initDataUser;
+  const userId = normalizeUserId(effectiveUser?.id || body.userId || request.headers.get('x-user-id'));
   const player = await readPlayer(env, userId);
   const patch = { lastSeenMs: Date.now() };
-  if (body.user) {
-    patch.username = body.user.username || player.username || '';
-    patch.firstName = body.user.first_name || body.user.firstName || player.firstName || '';
-    patch.lastName = body.user.last_name || body.user.lastName || player.lastName || '';
-    patch.languageCode = body.user.language_code || body.user.languageCode || player.languageCode || '';
+  const bodyProfile = normalizeTelegramProfile(effectiveUser || {});
+  if (effectiveUser) {
+    patch.username = bodyProfile.username || player.username || '';
+    patch.firstName = bodyProfile.firstName || player.firstName || '';
+    patch.lastName = bodyProfile.lastName || player.lastName || '';
+    patch.languageCode = bodyProfile.languageCode || player.languageCode || '';
   }
 
   if (body.event === 'visit') {
     patch.visits = Number(player.visits || 0) + 1;
   }
 
-  // При глобальном reset старые localStorage-данные телефона не должны возвращать старый баланс/прогресс.
-  const stateMatchesReset = Boolean(body.state?.resetNonce) && body.state.resetNonce === player.resetNonce;
+  const stateMatchesReset = !body.state?.resetNonce || body.state.resetNonce === player.resetNonce;
 
   if (body.event === 'game_finished') {
     patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || (stateMatchesReset ? body.state?.gamesPlayed : 0) || 0));
@@ -304,11 +308,7 @@ async function trackEvent(request, env) {
     patch.balance = Number(body.balance ?? (stateMatchesReset ? body.state?.balance : undefined) ?? player.balance ?? 10);
   }
 
-  if (body.event === 'locked') {
-    patch.locked = true;
-    patch.balance = Number(body.balance ?? (stateMatchesReset ? body.state?.balance : undefined) ?? player.balance ?? 10);
-    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || (stateMatchesReset ? body.state?.gamesPlayed : 0) || 0));
-  }
+  if (body.event === 'locked') patch.locked = true;
 
   if (body.event === 'partner_click' || body.event === 'direct_partner_click') {
     patch.locked = true;
@@ -337,7 +337,7 @@ async function trackEvent(request, env) {
     }
   }
 
-  return json({ ok: true, userId, saved: true });
+  return json({ ok: true });
 }
 
 function isAdmin(env, id) {
