@@ -146,12 +146,33 @@ function rowToPlayer(row) {
 
 async function readPlayer(env, userId) {
   const db = getDb(env);
+  const globalResetNonce = await getGlobalResetNonce(env);
   const row = await db.prepare('SELECT * FROM players WHERE user_id = ?').bind(String(userId)).first();
-  if (row) return rowToPlayer(row);
+
+  if (row) {
+    // Если админ нажал “сброс всей статистики”, старые локальные данные клиента
+    // больше не имеют права держать игрока в locked/partner popup состоянии.
+    if (globalResetNonce && row.reset_nonce !== globalResetNonce) {
+      const now = Date.now();
+      const triggerAfter = randomTriggerAfter();
+      await db.prepare(`
+        UPDATE players
+        SET last_seen = ?, visits = 0, games_played = 0, balance = 10,
+            locked = 0, clicked_partner = 0, clicked_at = NULL,
+            reset_nonce = ?, trigger_after = ?, last_result = '',
+            direct_partner_click = 0, direct_partner_clicked_at = NULL
+        WHERE user_id = ?
+      `).bind(now, globalResetNonce, triggerAfter, String(userId)).run();
+      const fresh = await db.prepare('SELECT * FROM players WHERE user_id = ?').bind(String(userId)).first();
+      return rowToPlayer(fresh);
+    }
+
+    return rowToPlayer(row);
+  }
 
   const now = Date.now();
   const triggerAfter = randomTriggerAfter();
-  const resetNonce = await getGlobalResetNonce(env);
+  const resetNonce = globalResetNonce;
   await db.prepare(`
     INSERT INTO players (user_id, first_seen, last_seen, visits, games_played, balance, locked, clicked_partner, reset_nonce, trigger_after, username, first_name, last_name, language_code, direct_partner_click)
     VALUES (?, ?, ?, 0, 0, 10, 0, 0, ?, ?, '', '', '', '', 0)
@@ -178,37 +199,6 @@ async function readPlayer(env, userId) {
   };
 }
 
-
-async function resetPlayerToFresh(env, userId, resetNonce = null, keepVisits = true) {
-  const current = await readPlayer(env, userId);
-  const nonce = resetNonce || await getGlobalResetNonce(env) || crypto.randomUUID();
-  return updatePlayer(env, userId, {
-    visits: keepVisits ? Number(current.visits || 0) : 0,
-    gamesPlayed: 0,
-    balance: 10,
-    locked: false,
-    clickedPartner: false,
-    directPartnerClick: false,
-    clickedAtMs: null,
-    directPartnerClickedAtMs: null,
-    resetNonce: nonce,
-    triggerAfter: randomTriggerAfter(),
-    lastResult: '',
-    username: current.username || '',
-    firstName: current.firstName || '',
-    lastName: current.lastName || '',
-    languageCode: current.languageCode || ''
-  });
-}
-
-async function readFreshPlayer(env, userId) {
-  const player = await readPlayer(env, userId);
-  const globalResetNonce = await getGlobalResetNonce(env);
-  if (globalResetNonce && player.resetNonce !== globalResetNonce) {
-    return resetPlayerToFresh(env, userId, globalResetNonce, true);
-  }
-  return player;
-}
 async function updatePlayer(env, userId, patch) {
   const current = await readPlayer(env, userId);
   const next = { ...current, ...patch, userId: String(userId) };
@@ -261,7 +251,7 @@ async function updatePlayer(env, userId, patch) {
 async function getPlayer(request, env) {
   const url = new URL(request.url);
   const userId = normalizeUserId(url.searchParams.get('userId') || request.headers.get('x-user-id'));
-  const player = await readFreshPlayer(env, userId);
+  const player = await readPlayer(env, userId);
   const profile = requestTelegramProfile(request);
   const updated = await updatePlayer(env, userId, {
     visits: Number(player.visits || 0) + 1,
@@ -292,7 +282,7 @@ async function getPlayer(request, env) {
 async function trackEvent(request, env) {
   const body = await request.json().catch(() => ({}));
   const userId = normalizeUserId(body.user?.id || body.userId || request.headers.get('x-user-id'));
-  const player = await readFreshPlayer(env, userId);
+  const player = await readPlayer(env, userId);
   const patch = { lastSeenMs: Date.now() };
   if (body.user) {
     patch.username = body.user.username || player.username || '';
@@ -342,7 +332,7 @@ async function trackEvent(request, env) {
     }
   }
 
-  return json({ ok: true });
+  return json({ ok: true, userId, saved: true });
 }
 
 function isAdmin(env, id) {
@@ -531,10 +521,8 @@ async function resetAllStats(env) {
   const db = getDb(env);
   const count = await db.prepare('SELECT COUNT(*) AS count FROM players').first('count');
   const nonce = crypto.randomUUID();
-  // Сначала меняем глобальную версию сброса. Даже если на клиенте/в D1 осталась старая запись,
-  // следующий /api/player принудительно пересоздаст её как новую игру с балансом $10.
-  await setGlobalResetNonce(env, nonce);
   await db.prepare('DELETE FROM players').run();
+  await setGlobalResetNonce(env, nonce);
   return Number(count || 0);
 }
 
