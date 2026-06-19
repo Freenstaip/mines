@@ -68,7 +68,8 @@ let mines = new Set();
 let opened = new Set();
 let currentWin = 0;
 let partnerUrl = DEFAULT_PARTNER_URL;
-let locked = Boolean(appState.locked);
+let locked = false;
+let booting = true;
 
 function readState() {
   try {
@@ -172,50 +173,68 @@ async function loadRemoteState() {
     lastName: tgUser?.last_name || '',
     languageCode: tgUser?.language_code || ''
   });
+
   const remote = await api(`/api/player?${params.toString()}`);
-  if (!remote) {
-    applyLockIfNeeded();
-    return null;
+
+  if (!remote || !remote.ok) {
+    // Если сервер временно недоступен, не отправляем старое локальное состояние
+    // обратно в D1 и не восстанавливаем FINISHED из localStorage. Иначе после
+    // полного сброса старый телефон может снова записать 3 игры и блокировку.
+    booting = false;
+    locked = false;
+    appState.locked = false;
+    appState.clickedPartner = false;
+    saveState();
+    partnerModal?.classList.add('hidden');
+    partnerModal?.setAttribute('aria-hidden', 'true');
+    sync();
+    return false;
   }
 
   partnerUrl = remote.partnerUrl || partnerUrl;
 
-  // ВАЖНО: сначала проверяем resetNonce и только потом переносим gamesPlayed/balance.
-  // Иначе после полного сброса старый localStorage может успеть записать обратно
-  // 3 игры и снова заблокировать игрока.
-  if (remote.resetNonce && remote.resetNonce !== appState.resetNonce) {
+  const oldResetNonce = appState.resetNonce || '';
+  const newResetNonce = remote.resetNonce || '';
+  const wasResetByAdmin = newResetNonce && newResetNonce !== oldResetNonce;
+
+  if (wasResetByAdmin) {
     resetLocalGameState(remote);
-    sync();
-    return remote;
   }
 
-  if (Number.isFinite(Number(remote.triggerAfter))) appState.triggerAfter = Number(remote.triggerAfter);
-  if (Number.isFinite(Number(remote.gamesPlayed))) appState.gamesPlayed = Math.max(Number(appState.gamesPlayed || 0), Number(remote.gamesPlayed));
-  if (Number.isFinite(Number(remote.balance)) && !active) balance = Number(remote.balance);
-
-  // Локальную блокировку НЕЛЬЗЯ автоматически снимать только потому, что сервер
-  // вернул нового/чистого игрока. Иначе после появления окна FINISHED пользователь
-  // может просто перезайти в игру и снова играть. Снятие блокировки происходит
-  // только при смене resetNonce после сброса через админку.
-  if (remote.locked || remote.clickedPartner) {
-    locked = true;
-    appState.locked = true;
-    appState.clickedPartner = Boolean(remote.clickedPartner || appState.clickedPartner);
-    saveState();
+  appState.resetNonce = newResetNonce;
+  if (Number.isFinite(Number(remote.triggerAfter))) {
+    appState.triggerAfter = Number(remote.triggerAfter);
   }
 
+  // Сервер — главный источник правды. Старый localStorage не должен повторно
+  // записывать старые игры/FINISHED после сброса админкой.
+  appState.gamesPlayed = Number(remote.gamesPlayed || 0);
+  balance = Number.isFinite(Number(remote.balance)) ? Number(remote.balance) : START_BALANCE;
+
+  locked = Boolean(remote.locked || remote.clickedPartner);
+  appState.locked = locked;
+  appState.clickedPartner = Boolean(remote.clickedPartner);
+  appState.popupShown = locked || Boolean(appState.popupShown && !wasResetByAdmin);
+
+  booting = false;
   saveState();
-  applyLockIfNeeded();
-  sync();
-  return remote;
+
+  if (locked) {
+    applyLockIfNeeded();
+  } else {
+    partnerModal?.classList.add('hidden');
+    partnerModal?.setAttribute('aria-hidden', 'true');
+    renderBoard();
+    setControlsForGame(false);
+    sync();
+  }
+
+  return true;
 }
 
 async function track(event, extra = {}) {
-  const payload = { userId, user: tgUser, event, ...extra };
-  // Для visit не отправляем полный localStorage state, чтобы старые данные телефона
-  // не могли восстановить gamesPlayed после сброса статистики в админке.
-  if (event !== 'visit') payload.state = appState;
-  api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
+  const payload = { userId, user: tgUser, event, state: appState, ...extra };
+  return api('/api/track', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 function coefficient(safeOpened, minesCount) {
@@ -325,6 +344,10 @@ function setControlsForGame(isActive) {
 }
 
 function startGame(firstClickIndex = null) {
+  if (booting) {
+    showMessage('Loading game, please wait a second');
+    return false;
+  }
   if (locked) {
     showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
     return false;
@@ -353,6 +376,10 @@ function startGame(firstClickIndex = null) {
 }
 
 function handleCellClick(index, cell) {
+  if (booting) {
+    showMessage('Loading game, please wait a second');
+    return;
+  }
   if (locked) {
     showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
     return;
@@ -481,21 +508,21 @@ function applyLockIfNeeded() {
   showPartnerModal('The game must be continued on the website', 'To continue the game, please go to the partner site.');
 }
 
-function openPartner() {
+async function openPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  await track('partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
 }
 
-function openDirectPartner() {
+async function openDirectPartner() {
   appState.clickedPartner = true;
   locked = true;
   saveState();
-  track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
+  await track('direct_partner_click', { balance, gamesPlayed: appState.gamesPlayed });
 
   if (tg?.openLink) tg.openLink(partnerUrl);
   else window.location.href = partnerUrl;
@@ -531,8 +558,10 @@ async function initGame() {
   renderBoard();
   sync();
   updateMaxWinPanel();
-  await loadRemoteState();
-  await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+  const loaded = await loadRemoteState();
+  if (loaded) {
+    await track('visit', { balance, gamesPlayed: appState.gamesPlayed });
+  }
 }
 
 initGame();
