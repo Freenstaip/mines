@@ -246,11 +246,11 @@ async function trackEvent(request, env) {
   const body = await request.json().catch(() => ({}));
   const userId = String(body.userId || request.headers.get('x-user-id') || 'demo-user');
   const player = await readPlayer(env, userId);
-  const globalResetNonce = await getGlobalResetNonce(env);
-  const serverResetNonce = player.resetNonce || globalResetNonce || '';
-  const clientResetNonce = body.state?.resetNonce || '';
-  const isStaleClientState = Boolean(serverResetNonce && clientResetNonce && clientResetNonce !== serverResetNonce);
-  const patch = { lastSeenMs: Date.now() };
+  const now = Date.now();
+  const patch = { lastSeenMs: now };
+  const clientResetNonce = String(body.resetNonce || body.state?.resetNonce || '');
+  const resetNonceMatches = !clientResetNonce || clientResetNonce === String(player.resetNonce || '');
+
   if (body.user) {
     patch.username = body.user.username || player.username || '';
     patch.firstName = body.user.first_name || body.user.firstName || player.firstName || '';
@@ -262,45 +262,37 @@ async function trackEvent(request, env) {
     patch.visits = Number(player.visits || 0) + 1;
   }
 
-  if (!isStaleClientState && body.event === 'game_finished') {
-    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
+  if (body.event === 'game_finished') {
+    patch.gamesPlayed = resetNonceMatches
+      ? Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0))
+      : Number(player.gamesPlayed || 0);
     patch.lastResult = body.result || player.lastResult || '';
-    patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
+    patch.balance = resetNonceMatches
+      ? Number(body.balance ?? body.state?.balance ?? player.balance ?? 10)
+      : Number(player.balance ?? 10);
   }
 
-  if (!isStaleClientState && body.event === 'locked') patch.locked = true;
+  if (body.event === 'locked') {
+    if (resetNonceMatches) patch.locked = true;
+  }
 
-  if (!isStaleClientState && (body.event === 'partner_click' || body.event === 'direct_partner_click')) {
-    patch.locked = true;
-    patch.clickedPartner = true;
-    patch.clickedAtMs = Date.now();
-    patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
-    patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
-    if (body.event === 'direct_partner_click') {
-      patch.directPartnerClick = true;
-      patch.directPartnerClickedAtMs = Date.now();
+  if (body.event === 'partner_click' || body.event === 'direct_partner_click') {
+    if (resetNonceMatches) {
+      patch.locked = true;
+      patch.clickedPartner = true;
+      patch.clickedAtMs = now;
+      patch.balance = Number(body.balance ?? body.state?.balance ?? player.balance ?? 10);
+      patch.gamesPlayed = Math.max(Number(player.gamesPlayed || 0), Number(body.gamesPlayed || body.state?.gamesPlayed || 0));
+      if (body.event === 'direct_partner_click') {
+        patch.directPartnerClick = true;
+        patch.directPartnerClickedAtMs = now;
+      }
     }
-  }
-
-  if (body.state && !isStaleClientState) {
-    patch.gamesPlayed ??= Math.max(Number(player.gamesPlayed || 0), Number(body.state.gamesPlayed || 0));
-    patch.balance ??= Number(body.state.balance ?? player.balance ?? 10);
-  }
-
-  if (isStaleClientState) {
-    patch.gamesPlayed = 0;
-    patch.balance = 10;
-    patch.locked = false;
-    patch.clickedPartner = false;
-    patch.directPartnerClick = false;
-    patch.resetNonce = serverResetNonce;
-    patch.triggerAfter = randomTriggerAfter();
-    patch.lastResult = '';
   }
 
   const updated = await updatePlayer(env, userId, patch);
 
-  if (body.event === 'game_finished') {
+  if (body.event === 'game_finished' && resetNonceMatches) {
     const shouldLockByGames = Number(updated.gamesPlayed || 0) >= Number(updated.triggerAfter || 3);
     const shouldLockByBalance = Number(updated.balance || 0) <= 0 && Number(updated.gamesPlayed || 0) <= 5;
     if (shouldLockByGames || shouldLockByBalance) {
